@@ -295,6 +295,9 @@ async def timeout_watcher(application: Application):
             p = PENDING.get(pid)
             if not p:
                 continue
+            user_data = application.user_data.get(p["user_id"])
+            if user_data is not None:
+                attachment_handler.clear_pending_files(user_data, pid)
             try:
                 await application.bot.edit_message_text(
                     chat_id=p["card_chat_id"],
@@ -311,8 +314,8 @@ async def send_or_update_txn_card(update_or_query, context: ContextTypes.DEFAULT
     p = PENDING[pending_id]
     parsed = p["parsed"]
 
-    # Check for queued files in the current session
-    pending_files = attachment_handler.get_pending_files(context)
+    # Check for files queued for this specific transaction
+    pending_files = attachment_handler.get_pending_files(context.user_data, pending_id)
     file_note = ""
     if pending_files:
         count = len(pending_files)
@@ -643,39 +646,40 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- New Attachment Logic ----------
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Intercepts documents and photos during attachment collection phase."""
+    """Intercepts documents and photos during the attachment collection phase."""
     if not is_authorized(update):
         return
 
-    # --- ADD THIS LOGIC ---
-    # Refresh the activity timer so the session doesn't time out during upload
-    user_id = update.effective_user.id
-    active_pid = ACTIVE_BY_USER.get(user_id)
-    if active_pid:
-        touch(active_pid)
-    handled = await attachment_handler.handle_incoming_file(update, context)
-    if not handled:
-        await update.message.reply_text(
-            "📎 Send a transaction first, then use the Attach File button."
-        )
+    pid = attachment_handler.awaiting_pid(context.user_data)
+    if pid and pid in PENDING:
+        # Refresh the activity timer so the session doesn't time out mid-upload
+        touch(pid)
+        await attachment_handler.handle_incoming_file(update, context)
+        return
+
+    if pid:
+        # Collection was open for a transaction that no longer exists
+        attachment_handler.clear_pending_files(context.user_data, pid)
+    await update.message.reply_text(
+        "📎 Send a transaction first, then use the Attach File button."
+    )
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/done — finalises file collection and restores the Confirm button."""
     if not is_authorized(update):
         return
 
-    user_id = update.effective_user.id
-    pid = ACTIVE_BY_USER.get(user_id)
-
-    if await attachment_handler.handle_done_command(update, context):
-        if pid and pid in PENDING:
-            # Tell the user files are ready and show the card again
-            await update.message.reply_text("📎 Files queued. Final check before logging:")
-            await send_or_update_txn_card(update, context, pid, edit=False)
-        else:
-            await update.message.reply_text("📎 Files queued, but I lost the transaction. Please send it again.")
-    else:
+    pid = attachment_handler.handle_done_command(context.user_data)
+    if pid is None:
         await update.message.reply_text("Nothing to finalise right now.")
+        return
+
+    if pid in PENDING:
+        await update.message.reply_text("📎 Files queued. Final check before logging:")
+        await send_or_update_txn_card(update, context, pid, edit=False)
+    else:
+        attachment_handler.clear_pending_files(context.user_data, pid)
+        await update.message.reply_text("📎 That transaction expired. Please send it again.")
 
 async def send_to_digest_recipients(
     context: ContextTypes.DEFAULT_TYPE,
@@ -754,11 +758,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info(f"📥 {text!r}")
 
     # Guard: if we're attaching files, don't let random text kill the transaction
-    from attachment import AWAITING_ATTACHMENT_KEY
-    if context.user_data.get(AWAITING_ATTACHMENT_KEY):
+    awaiting_pid = attachment_handler.awaiting_pid(context.user_data)
+    if awaiting_pid:
         if looks_like_new_input(text):
-            # If the user sends a NEW txn, clear the old attachment session
-            attachment_handler.clear_pending_files(context)
+            # The user moved on to a new transaction: drop the old file session
+            attachment_handler.clear_pending_files(context.user_data, awaiting_pid)
         else:
             # Otherwise ignore captions/chat to stay in "Attach Mode"
             return
@@ -975,9 +979,10 @@ async def handle_defer_input(update, context, phrase: str):
 
 async def upload_pending_attachments(
     context: ContextTypes.DEFAULT_TYPE,
+    pending_id: str,
     journal_id: str,
 ) -> tuple[int, int]:
-    pending_files = attachment_handler.get_pending_files(context)
+    pending_files = attachment_handler.get_pending_files(context.user_data, pending_id)
     if not pending_files:
         return 0, 0
 
@@ -985,10 +990,8 @@ async def upload_pending_attachments(
         journal_id=str(journal_id),
         local_paths=pending_files,
     )
-    if failed_paths:
-        attachment_handler.set_pending_files(context, failed_paths)
-    else:
-        attachment_handler.clear_pending_files(context)
+    # Keep only the failed files queued so a retry can't re-upload successes
+    attachment_handler.set_pending_files(context.user_data, pending_id, failed_paths)
     return ok, fail
 
 # ---------- Callback handler (covers everything tappable) ----------
@@ -1005,14 +1008,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_id = parts[1] if len(parts) > 1 else None
     extra = parts[2] if len(parts) > 2 else None
 
-    # 1. Handle "Done" (Requires ACTIVE_BY_USER, not pending_id in callback)
+    # "Done adding files" button — the collecting session knows its own pending ID
     if action == "attach_done":
-        user_id = update.effective_user.id
-        pid = ACTIVE_BY_USER.get(user_id)
-        await attachment_handler.handle_done_command(update, context)
+        pid = attachment_handler.handle_done_command(context.user_data)
         if pid and pid in PENDING:
             p = PENDING[pid]
             p["state"] = "awaiting_confirm"
+            touch(pid)
             await send_or_update_txn_card(update, context, pid, edit=True)
         return
 
@@ -1075,7 +1077,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        ok, fail = await upload_pending_attachments(context, str(p["journal_id"]))
+        ok, fail = await upload_pending_attachments(context, pending_id, str(p["journal_id"]))
         p["attachment_success_count"] = p.get("attachment_success_count", 0) + ok
         note = attachment_note(p["attachment_success_count"], fail)
         status_label = p.get("status_label", "Transaction saved")
@@ -1099,7 +1101,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "attachdiscard":
         status_label = p.get("status_label", "Transaction saved")
-        attachment_handler.clear_pending_files(context)
+        attachment_handler.clear_pending_files(context.user_data, pending_id)
         discard(pending_id)
         await query.edit_message_text(
             f"{original_card}\n\n✅ _{status_label}_\n\n🗑 _Discarded failed attachment files._",
@@ -1111,11 +1113,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if p.get("kind") != "transaction":
             await query.edit_message_text(f"{original_card}\n\n📎 _Attachments are only for transactions._", parse_mode="Markdown")
             return
-        await attachment_handler.prompt_for_files(update, context)
+        await attachment_handler.prompt_for_files(update, context, pending_id)
         return
 
     if action == "cancel":
-        attachment_handler.clear_pending_files(context)
+        attachment_handler.clear_pending_files(context.user_data, pending_id)
         discard(pending_id)
         await query.edit_message_text(f"{original_card}\n\n🗑 _Cancelled_", parse_mode="Markdown")
         return
@@ -1202,7 +1204,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     journal_id = res_data["attributes"]["transactions"][0].get("transaction_journal_id", txn_id)
                     status_label = f"Logged at {now_str}. Transaction #{txn_id}"
 
-                ok, fail = await upload_pending_attachments(context, str(journal_id))
+                ok, fail = await upload_pending_attachments(context, pending_id, str(journal_id))
                 p["attachment_success_count"] = ok
                 attach_note = attachment_note(ok, fail)
                 if fail:

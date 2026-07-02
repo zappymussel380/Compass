@@ -4,22 +4,28 @@ attachment.py
 Handles bill/proof file attachments on Compass transactions.
 
 Flow:
-  1. After transaction is staged (pending confirm), user taps 📎 Attach File
+  1. After a transaction is staged (pending confirm), the user taps 📎 Attach File
   2. Bot prompts for files - user sends PDFs / images one by one
   3. User sends /done (or taps Done button) to finalise
   4. On confirm, files are:
-     a. Saved temporarily under ATTACHMENTS_DIR/pending/
+     a. Saved temporarily under ATTACHMENTS_DIR/pending/<pending_id>/
      b. Registered and uploaded to Firefly III via the Attachments API
      c. Deleted locally after upload
+
+Every queued file is tied to the pending transaction it was collected for, so
+receipts can never be uploaded to a different transaction's journal.
 
 Supported formats: PDF, JPG, JPEG, PNG, WEBP
 Max file size: 20MB (Telegram Bot API limit for documents)
 """
 
-import os
 import logging
-from pathlib import Path
+import os
+import shutil
+import uuid
 from datetime import datetime
+from pathlib import Path
+from typing import MutableMapping
 
 import httpx
 from telegram import Update, Message
@@ -43,10 +49,9 @@ ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE_MB = 20
 
 
-# -- Session state key ---------------------------------------------
-# Stored in context.user_data during the attachment collection phase
-ATTACHMENT_SESSION_KEY = "pending_attachments"  # list of local file paths
-AWAITING_ATTACHMENT_KEY = "awaiting_attachment"  # bool flag
+# -- Session state keys (stored in context.user_data) ---------------
+ATTACHMENT_SESSIONS_KEY = "attachment_sessions"  # dict: pending_id -> [local paths]
+AWAITING_ATTACHMENT_KEY = "awaiting_attachment"  # pending_id currently collecting
 
 
 class AttachmentHandler:
@@ -57,21 +62,84 @@ class AttachmentHandler:
 
     def __init__(self):
         ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        self._purge_stale_pending()
         logger.info(f"[Attachments] Storage root: {ATTACHMENTS_DIR}")
 
-    # Telegram handlers
+    @staticmethod
+    def _purge_stale_pending() -> None:
+        """Remove files left over from sessions that died with a previous run.
+        Pending state lives in memory, so after a restart these files can never
+        be retried and would otherwise accumulate forever."""
+        pending_root = ATTACHMENTS_DIR / "pending"
+        if not pending_root.exists():
+            return
+        try:
+            shutil.rmtree(pending_root)
+            logger.info("[Attachments] Purged stale pending files from previous run")
+        except OSError as e:
+            logger.warning(f"[Attachments] Could not purge stale pending files: {e}")
+
+    # ---------- Session state ----------
+
+    @staticmethod
+    def awaiting_pid(user_data: MutableMapping) -> str | None:
+        """Pending-transaction ID currently collecting files, if any."""
+        return user_data.get(AWAITING_ATTACHMENT_KEY)
+
+    @staticmethod
+    def get_pending_files(user_data: MutableMapping, pending_id: str) -> list[str]:
+        """Local paths of files queued for this pending transaction."""
+        return user_data.get(ATTACHMENT_SESSIONS_KEY, {}).get(pending_id, [])
+
+    @staticmethod
+    def set_pending_files(
+        user_data: MutableMapping, pending_id: str, paths: list[str]
+    ) -> None:
+        """Replace the queued file list without touching the files on disk."""
+        sessions = user_data.setdefault(ATTACHMENT_SESSIONS_KEY, {})
+        if paths:
+            sessions[pending_id] = paths
+        else:
+            sessions.pop(pending_id, None)
+
+    def clear_pending_files(
+        self, user_data: MutableMapping, pending_id: str
+    ) -> None:
+        """Drop the session and delete its files and temp directory."""
+        sessions = user_data.get(ATTACHMENT_SESSIONS_KEY, {})
+        paths = sessions.pop(pending_id, [])
+        if user_data.get(AWAITING_ATTACHMENT_KEY) == pending_id:
+            user_data.pop(AWAITING_ATTACHMENT_KEY, None)
+
+        for p in paths:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError as e:
+                logger.error(f"[Attachments] Failed to delete file {p}: {e}")
+
+        try:
+            temp_dir = ATTACHMENTS_DIR / "pending" / pending_id
+            if temp_dir.exists():
+                temp_dir.rmdir()  # only succeeds when empty
+        except OSError:
+            pass
+
+    def handle_done_command(self, user_data: MutableMapping) -> str | None:
+        """Finalise file collection. Returns the pending ID that was collecting,
+        or None if no collection was in progress."""
+        return user_data.pop(AWAITING_ATTACHMENT_KEY, None)
+
+    # ---------- Telegram handlers ----------
 
     async def prompt_for_files(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, pending_id: str
     ) -> None:
-        """
-        Called when user taps the 📎 Attach File button on the confirm keyboard.
-        Sets the AWAITING_ATTACHMENT flag and waits for incoming files.
-        """
-        context.user_data[AWAITING_ATTACHMENT_KEY] = True
-        context.user_data[ATTACHMENT_SESSION_KEY] = []
+        """Called when the user taps 📎 Attach File on the confirm keyboard."""
+        context.user_data[AWAITING_ATTACHMENT_KEY] = pending_id
+        context.user_data.setdefault(ATTACHMENT_SESSIONS_KEY, {}).setdefault(
+            pending_id, []
+        )
 
-        await update.callback_query.answer()
         await update.callback_query.edit_message_text(
             "📎 Send me the bill(s) now - PDF or image files, one at a time.\n"
             "When you're done, send /done or tap the button below.",
@@ -82,13 +150,12 @@ class AttachmentHandler:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> bool:
         """
-        Receives a document or photo from the user during attachment phase.
-        Returns True if the file was accepted, False if ignored (wrong state).
-
-        Wire this into your MessageHandler before the normal message router,
-        checking AWAITING_ATTACHMENT_KEY first.
+        Receives a document or photo from the user during the attachment phase.
+        Returns True if the file was accepted or rejected with feedback,
+        False if no collection is in progress.
         """
-        if not context.user_data.get(AWAITING_ATTACHMENT_KEY):
+        pending_id = self.awaiting_pid(context.user_data)
+        if not pending_id:
             return False
 
         message: Message = update.effective_message
@@ -118,28 +185,28 @@ class AttachmentHandler:
             ext = Path(doc.file_name or "bill.pdf").suffix.lower()
             if ext not in ALLOWED_EXTENSIONS:
                 ext = _mime_to_ext(mime_type)
-            filename = f"bill_{_ts()}{ext}"
+            filename = f"bill_{_unique_ts()}{ext}"
 
         # Photo (compressed image - acceptable for receipts)
         elif message.photo:
             photo = message.photo[-1]  # highest resolution
             file_obj = await photo.get_file()
-            filename = f"bill_{_ts()}.jpg"
+            filename = f"bill_{_unique_ts()}.jpg"
             mime_type = "image/jpeg"
 
         else:
             return False  # not a file message - let other handlers deal with it
 
         # Download to a temp location (txn not yet confirmed, no journal_id yet)
-        temp_dir = ATTACHMENTS_DIR / "pending" / str(update.effective_user.id)
+        temp_dir = ATTACHMENTS_DIR / "pending" / pending_id
         temp_dir.mkdir(parents=True, exist_ok=True)
         local_path = temp_dir / filename
 
         await file_obj.download_to_drive(local_path)
         logger.info(f"[Attachments] Saved pending file: {local_path}")
 
-        # Track in session
-        pending: list = context.user_data[ATTACHMENT_SESSION_KEY]
+        sessions = context.user_data.setdefault(ATTACHMENT_SESSIONS_KEY, {})
+        pending = sessions.setdefault(pending_id, [])
         pending.append(str(local_path))
         count = len(pending)
 
@@ -149,60 +216,7 @@ class AttachmentHandler:
         )
         return True
 
-    async def handle_done_command(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> bool:
-        if not context.user_data.get(AWAITING_ATTACHMENT_KEY):
-            return False
-
-        # Simply clear the flag; bot.py will handle the UI refresh
-        context.user_data[AWAITING_ATTACHMENT_KEY] = False
-        return True
-
-    def get_pending_files(self, context: ContextTypes.DEFAULT_TYPE) -> list[str]:
-        """Returns list of local paths for files collected this session."""
-        return context.user_data.get(ATTACHMENT_SESSION_KEY, [])
-
-    def set_pending_files(
-        self,
-        context: ContextTypes.DEFAULT_TYPE,
-        paths: list[str],
-    ) -> None:
-        """Replace the pending attachment list without deleting the files."""
-        if paths:
-            context.user_data[ATTACHMENT_SESSION_KEY] = paths
-            context.user_data[AWAITING_ATTACHMENT_KEY] = False
-        else:
-            context.user_data.pop(ATTACHMENT_SESSION_KEY, None)
-            context.user_data.pop(AWAITING_ATTACHMENT_KEY, None)
-
-    def clear_pending_files(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Wipes all physical traces of a transaction's attachments."""
-        # 1. Pop the paths and state flags (Indented 8 spaces)
-        paths = context.user_data.pop(ATTACHMENT_SESSION_KEY, [])
-        context.user_data.pop(AWAITING_ATTACHMENT_KEY, None)
-
-        # 2. Delete every individual file first
-        for p in paths:
-            try:
-                Path(p).unlink(missing_ok=True)
-            except Exception as e:
-                logger.error(f"Failed to delete file {p}: {e}")
-
-        # 3. Now, try to delete the user's temp folder (Must be INSIDE the function)
-        if paths:
-            try:
-                # We derive the folder path from the first file's parent
-                temp_dir = Path(paths[0]).parent
-                if temp_dir.exists() and "pending" in temp_dir.parts:
-                    temp_dir.rmdir() # This only succeeds if the folder is empty
-                    logger.info(f"Successfully removed temp directory: {temp_dir}")
-            except Exception:
-                # We catch exceptions because other concurrent uploads 
-                # might still have the folder open.
-                pass
-
-    # ------Firefly III integration ---------------------------------------
+    # ---------- Firefly III integration ----------
 
     async def attach_to_transaction(
         self,
@@ -259,9 +273,11 @@ class AttachmentHandler:
                     )
                     upload_resp.raise_for_status()
 
-                    # 3. SUCCESS: Delete the local temporary file immediately
-                    src.unlink() 
-                    logger.info(f"[Attachments] Successfully uploaded and deleted local copy of {src.name}")
+                    # 3. Success: delete the local temporary file immediately
+                    src.unlink()
+                    logger.info(
+                        f"[Attachments] Uploaded and deleted local copy of {src.name}"
+                    )
                     success += 1
 
                 except Exception as e:
@@ -269,12 +285,12 @@ class AttachmentHandler:
                     fail += 1
                     failed_paths.append(str(src))
 
-        # Clean up now-empty pending dir if possible
+        # Clean up the now-empty per-transaction dir if possible
         try:
             src_parent = Path(local_paths[0]).parent
             if src_parent.exists() and not any(src_parent.iterdir()):
                 src_parent.rmdir()
-        except Exception:
+        except OSError:
             pass
 
         return success, fail, failed_paths
@@ -282,8 +298,10 @@ class AttachmentHandler:
 
 # Helpers
 
-def _ts() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+def _unique_ts() -> str:
+    """Timestamp plus a random suffix so two files in the same second
+    cannot overwrite each other."""
+    return f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
 
 def _mime_to_ext(mime: str) -> str:
