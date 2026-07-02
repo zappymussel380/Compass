@@ -149,6 +149,44 @@ def warm_model(timeout: int = OLLAMA_WARMUP_TIMEOUT):
         except Exception as e:
             log.warning(f"  ✗ {name} warm-up failed: {e}")
 
+# ---------- LLM output validation ----------
+
+_TXN_TYPES = {"withdrawal", "deposit", "transfer"}
+
+def invalid_txn_reason(parsed) -> str | None:
+    """Sanity-check (and normalize in place) an LLM transaction parse.
+    Returns a reason string if the parse is unusable, else None."""
+    if not isinstance(parsed, dict):
+        return "model did not return an object"
+    if parsed.get("type") not in _TXN_TYPES:
+        return f"unsupported transaction type: {parsed.get('type')!r}"
+    try:
+        amount = float(parsed.get("amount"))
+    except (TypeError, ValueError):
+        return "missing or invalid amount"
+    if amount <= 0:
+        return "amount must be positive"
+    parsed["amount"] = amount
+    if not isinstance(parsed.get("tags"), list):
+        parsed["tags"] = []
+    if not isinstance(parsed.get("description"), str) or not parsed["description"].strip():
+        parsed["description"] = "?"
+    return None
+
+def invalid_todo_reason(parsed) -> str | None:
+    """Sanity-check (and normalize in place) an LLM todo parse."""
+    if not isinstance(parsed, dict):
+        return "model did not return an object"
+    title = parsed.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "missing task title"
+    project = parsed.get("project")
+    if not isinstance(project, str) or not project.strip():
+        return "missing project"
+    if not isinstance(parsed.get("recurrence"), dict):
+        parsed["recurrence"] = None
+    return None
+
 # ---------- Card formatting ----------
 
 def md(value) -> str:
@@ -848,6 +886,12 @@ async def handle_transaction_message(update, context, text: str):
         await update.message.reply_text("🤔 Couldn't parse. Try starting with `remind` for a todo.")
         return
 
+    reason = invalid_txn_reason(parsed)
+    if reason:
+        log.warning(f"Unusable transaction parse ({reason}): {parsed!r}")
+        await update.message.reply_text("🤔 Couldn't parse that into a transaction. Try rephrasing.")
+        return
+
     src_status, src_value = resolve_account(parsed.get("source_raw") or "")
     dst_canonical = None
     dst_status = "match"
@@ -886,6 +930,13 @@ async def handle_edit_correction(update, context, pending_id: str, correction: s
         log.exception("edit failed"); await update.message.reply_text(f"❌ {md(e)}", parse_mode="Markdown"); return
 
     log.info(f"✏️ {new_parsed}")
+
+    reason = invalid_txn_reason(new_parsed)
+    if reason:
+        log.warning(f"Unusable correction parse ({reason}): {new_parsed!r}")
+        await update.message.reply_text("🤔 Couldn't apply that correction. Try rephrasing.")
+        return
+
     p["parsed"] = new_parsed
     src_status, src_value = resolve_account(new_parsed.get("source_raw") or "")
     p["src_canonical"] = src_value if src_status == "match" else None
@@ -931,6 +982,12 @@ async def handle_todo_message(update, context, text: str):
         log.exception("todo LLM failed"); await update.message.reply_text(f"❌ {md(e)}", parse_mode="Markdown"); return
 
     log.info(f"🧠 todo: {parsed}")
+
+    reason = invalid_todo_reason(parsed)
+    if reason:
+        log.warning(f"Unusable todo parse ({reason}): {parsed!r}")
+        await update.message.reply_text("🤔 Couldn't parse that reminder. Try rephrasing.")
+        return
 
     pending_id = uuid.uuid4().hex[:8]
     PENDING[pending_id] = {
@@ -1249,6 +1306,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- Main ----------
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Last-resort handler so unexpected exceptions are logged and the user
+    is told something went wrong instead of getting silence."""
+    log.error("Unhandled exception while processing an update", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                "❌ Something went wrong — check the bot logs.",
+            )
+        except Exception:
+            pass
+
 async def post_init(application: Application):
     asyncio.create_task(timeout_watcher(application))
     asyncio.create_task(asyncio.to_thread(warm_model, OLLAMA_WARMUP_TIMEOUT))
@@ -1299,6 +1369,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, on_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_error_handler(on_error)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
