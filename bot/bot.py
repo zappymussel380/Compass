@@ -280,12 +280,15 @@ def kb_todo_confirm(pending_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🗑 Cancel", callback_data=f"cancel:{pending_id}"),
     ]])
 
+# Stable, sorted account list so picker buttons can reference accounts by
+# index — full names would overflow Telegram's 64-byte callback_data limit.
+ACCOUNT_CHOICES = sorted(ACCOUNTS)
+
 def kb_account_picker(pending_id: str, slot: str) -> InlineKeyboardMarkup:
     rows = []
-    accounts = sorted(ACCOUNTS.keys())
-    for i in range(0, len(accounts), 2):
-        row = [InlineKeyboardButton(name, callback_data=f"pick{slot}:{pending_id}:{name}")
-               for name in accounts[i:i+2]]
+    for i in range(0, len(ACCOUNT_CHOICES), 2):
+        row = [InlineKeyboardButton(name, callback_data=f"pick{slot}:{pending_id}:{idx}")
+               for idx, name in enumerate(ACCOUNT_CHOICES[i:i+2], start=i)]
         rows.append(row)
     rows.append([InlineKeyboardButton("🗑 Cancel", callback_data=f"cancel:{pending_id}")])
     return InlineKeyboardMarkup(rows)
@@ -318,9 +321,11 @@ def touch(pending_id: str):
         PENDING[pending_id]["last_activity"] = time.time()
 
 def discard(pending_id: str):
-    log.info(f"🗑 [AUDIT] Discarding ID: {pending_id}") # Add this line
     p = PENDING.pop(pending_id, None)
-    if p:
+    # Only unmap the user if this pending is still their active one —
+    # the timeout watcher may discard an old card after the user has
+    # already started a new transaction.
+    if p and ACTIVE_BY_USER.get(p["user_id"]) == pending_id:
         ACTIVE_BY_USER.pop(p["user_id"], None)
 
 async def timeout_watcher(application: Application):
@@ -599,15 +604,16 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             attr = item["attributes"]["transactions"][0]
             t_id = item["id"]
 
-            # Use the new helpers for clean formatting
             date_part = fmt_date(attr["date"])
-            time_part = fmt_time(attr["date"]) 
-
-            # Ensure amount is a float before formatting to 2 decimals
+            time_part = fmt_time(attr["date"])
             amount_str = f"₹{float(attr['amount']):.2f}"
 
+            desc = attr["description"]
+            if len(desc) > 40:
+                desc = desc[:40] + "…"
+
             lines.append(f"#{t_id} | {date_part} {time_part} | *{amount_str}*")
-            lines.append(f"📝 {md(attr['description'][:40])}...")
+            lines.append(f"📝 {md(desc)}")
             lines.append("")
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
@@ -828,11 +834,10 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_kind = active.get("kind")
 
     if active_state == "awaiting_edit_input" and active_kind == "transaction":
-        if looks_like_new_input(text):
-            await _cancel_pending(active_pid, context, "_Cancelled (new input sent)_")
-        else:
-            await handle_edit_correction(update, context, active_pid, text)
-            return
+        # The user explicitly tapped Edit — treat whatever they typed as a
+        # correction, even if it contains digits ("amount is 300").
+        await handle_edit_correction(update, context, active_pid, text)
+        return
     elif active_state == "awaiting_confirm" and active_kind == "transaction" and not looks_like_new_input(text):
         await handle_edit_correction(update, context, active_pid, text)
         return
@@ -1064,9 +1069,12 @@ async def upload_pending_attachments(
 # ---------- Callback handler (covers everything tappable) ----------
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update): return
     query = update.callback_query
+    # Always answer so the client stops showing a loading spinner,
+    # even for unauthorized taps.
     await query.answer()
+    if not is_authorized(update):
+        return
     data = query.data
     parts = data.split(":", 2)
     action = parts[0]
@@ -1201,18 +1209,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"{original_card}\n\n✏️ _What should I change?_", parse_mode="Markdown")
         return
 
-    if action == "picksrc":
-        p["src_canonical"] = extra  # Now 'extra' is safely defined!
-        if p["parsed"]["type"] in ("transfer", "deposit") and p["dst_canonical"] is None:
-            p["state"] = "awaiting_dest_pick"
+    if action in ("picksrc", "pickdst"):
+        try:
+            choice = ACCOUNT_CHOICES[int(extra)]
+        except (TypeError, ValueError, IndexError):
+            log.warning(f"Invalid account pick payload: {data!r}")
+            return
+        if action == "picksrc":
+            p["src_canonical"] = choice
+            if p["parsed"]["type"] in ("transfer", "deposit") and p["dst_canonical"] is None:
+                p["state"] = "awaiting_dest_pick"
+            else:
+                p["state"] = "awaiting_confirm"
         else:
+            p["dst_canonical"] = choice
             p["state"] = "awaiting_confirm"
-        await send_or_update_txn_card(update, context, pending_id, edit=True)
-        return
-
-    if action == "pickdst":
-        p["dst_canonical"] = extra
-        p["state"] = "awaiting_confirm"
         await send_or_update_txn_card(update, context, pending_id, edit=True)
         return
 
