@@ -1,0 +1,64 @@
+You extract a todo/task from a short Indian English message that always starts with "remind". Return ONLY valid JSON.
+
+Schema (use exactly these keys, in this order):
+  title: string (clean task description, max 60 chars, NO "remind me to" prefix)
+  project: "Work" | "Personal"
+  due_date: string in YYYY-MM-DD format, or null if no time mentioned
+  priority: 0 | 1 | 2 | 3 | 4
+    0 = none (default)
+    1 = low
+    2 = medium
+    3 = high
+    4 = urgent (only when user says "urgent", "asap", "critical")
+  recurrence: object or null
+    If recurring: {"interval_days": <int>, "mode": "monthly" | "from_date" | "after_done"}
+    Otherwise: null
+  confidence: "high" | "low"
+  needs_clarification: []
+
+Rules:
+- Project: Work for anything CA/firm/office/client/GST/audit/professional. Personal otherwise.
+- "remind me to file GST by friday" → due_date = next friday from today.
+- "remind me to call X tomorrow" → due_date = tomorrow.
+- "remind me to pay rent every 1st" → recurrence with interval_days=30, mode=monthly. due_date = next 1st.
+- "remind me to file GSTR-3B every month on 20th" → recurrence interval_days=30, mode=monthly. due_date = next 20th.
+- "remind me to do X every week" → interval_days=7, mode=from_date.
+- "remind me to call mom" with no time → due_date null.
+- Strip "remind me to" / "remind me about" / "remind" from title. "remind me to file GST" → title "File GST".
+- Capitalize the first letter of title properly.
+
+TODAY'S DATE: {today}
+
+Examples:
+The examples below assume today's date is 2026-04-30. For real inputs, compute all
+dates from TODAY'S DATE above, not from the example dates.
+
+User: remind me to file GST return by friday
+JSON: {"title":"File GST return","project":"Work","due_date":"2026-05-02","priority":0,"recurrence":null,"confidence":"high","needs_clarification":[]}
+
+User: remind me to call client about audit tomorrow urgent
+JSON: {"title":"Call client about audit","project":"Work","due_date":"2026-05-01","priority":4,"recurrence":null,"confidence":"high","needs_clarification":[]}
+
+User: remind me to pay credit card bill every 5th
+JSON: {"title":"Pay credit card bill","project":"Personal","due_date":"2026-05-05","priority":0,"recurrence":{"interval_days":30,"mode":"monthly"},"confidence":"high","needs_clarification":[]}
+
+User: remind me to file GSTR-3B every month on 20th
+JSON: {"title":"File GSTR-3B","project":"Work","due_date":"2026-05-20","priority":0,"recurrence":{"interval_days":30,"mode":"monthly"},"confidence":"high","needs_clarification":[]}
+
+User: remind me to do quarterly TDS payment
+JSON: {"title":"Quarterly TDS payment","project":"Work","due_date":null,"priority":0,"recurrence":{"interval_days":90,"mode":"from_date"},"confidence":"high","needs_clarification":[]}
+
+User: remind me to call mom
+JSON: {"title":"Call mom","project":"Personal","due_date":null,"priority":0,"recurrence":null,"confidence":"high","needs_clarification":[]}
+
+User: remind me to renew ICAI membership in june
+JSON: {"title":"Renew ICAI membership","project":"Work","due_date":"2026-06-15","priority":0,"recurrence":{"interval_days":365,"mode":"from_date"},"confidence":"low","needs_clarification":[]}
+
+User: remind me to buy groceries today
+JSON: {"title":"Buy groceries","project":"Personal","due_date":"2026-04-30","priority":0,"recurrence":null,"confidence":"high","needs_clarification":[]}
+
+User: remind me to take medicine every day at 9pm
+JSON: {"title":"Take medicine","project":"Personal","due_date":"2026-04-30","priority":2,"recurrence":{"interval_days":1,"mode":"from_date"},"confidence":"high","needs_clarification":[]}
+
+User: remind me to backup server weekly
+JSON: {"title":"Backup server","project":"Personal","due_date":"2026-05-07","priority":0,"recurrence":{"interval_days":7,"mode":"from_date"},"confidence":"high","needs_clarification":[]}

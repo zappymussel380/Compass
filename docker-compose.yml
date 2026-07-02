@@ -1,0 +1,161 @@
+name: compass
+
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:?Set OLLAMA_IMAGE in .env}
+    container_name: compass_ollama
+    restart: unless-stopped
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ./data/ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:--1}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-4096}
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  firefly_db:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    container_name: compass_firefly_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=firefly
+      - POSTGRES_USER=firefly
+      - POSTGRES_PASSWORD=${FIREFLY_DB_PASSWORD:?Set FIREFLY_DB_PASSWORD in .env}
+      - TZ=${TZ:-Asia/Kolkata}
+    volumes:
+      - ./data/firefly_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firefly -d firefly"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  firefly:
+    image: ${FIREFLY_IMAGE:?Set FIREFLY_IMAGE in .env}
+    container_name: compass_firefly
+    restart: unless-stopped
+    depends_on:
+      firefly_db:
+        condition: service_healthy
+    environment:
+      - APP_KEY=${FIREFLY_APP_KEY:?Set FIREFLY_APP_KEY in .env}
+      - DB_CONNECTION=pgsql
+      - DB_HOST=firefly_db
+      - DB_PORT=5432
+      - DB_DATABASE=firefly
+      - DB_USERNAME=firefly
+      - DB_PASSWORD=${FIREFLY_DB_PASSWORD:?Set FIREFLY_DB_PASSWORD in .env}
+      - TZ=${TZ:-Asia/Kolkata}
+      - DEFAULT_LANGUAGE=${FIREFLY_DEFAULT_LANGUAGE:-en_US}
+      - DEFAULT_LOCALE=${FIREFLY_DEFAULT_LOCALE:-en_IN}
+      - APP_URL=${FIREFLY_APP_URL:-http://localhost:24010}
+      - MAIL_MAILER=log
+      - APP_LOG_LEVEL=notice
+      - TRUSTED_PROXIES=${FIREFLY_TRUSTED_PROXIES:-}
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${FIREFLY_PORT:-24010}:8080"
+    volumes:
+      - ./data/firefly_uploads:/var/www/html/storage/upload
+
+  vikunja_db:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE in .env}
+    container_name: compass_vikunja_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=vikunja
+      - POSTGRES_USER=vikunja
+      - POSTGRES_PASSWORD=${VIKUNJA_DB_PASSWORD:?Set VIKUNJA_DB_PASSWORD in .env}
+      - TZ=${TZ:-Asia/Kolkata}
+    volumes:
+      - ./data/vikunja_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vikunja -d vikunja"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vikunja:
+    image: ${VIKUNJA_IMAGE:?Set VIKUNJA_IMAGE in .env}
+    container_name: compass_vikunja
+    restart: unless-stopped
+    depends_on:
+      vikunja_db:
+        condition: service_healthy
+    environment:
+      - VIKUNJA_SERVICE_PUBLICURL=${VIKUNJA_PUBLIC_URL:-http://localhost:24030}
+      - VIKUNJA_SERVICE_TIMEZONE=${TZ:-Asia/Kolkata}
+      - VIKUNJA_DATABASE_TYPE=postgres
+      - VIKUNJA_DATABASE_HOST=vikunja_db
+      - VIKUNJA_DATABASE_USER=vikunja
+      - VIKUNJA_DATABASE_PASSWORD=${VIKUNJA_DB_PASSWORD:?Set VIKUNJA_DB_PASSWORD in .env}
+      - VIKUNJA_DATABASE_DATABASE=vikunja
+      - VIKUNJA_SERVICE_ENABLEREGISTRATION=${VIKUNJA_ENABLE_REGISTRATION:-false}
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${VIKUNJA_PORT:-24030}:3456"
+    volumes:
+      - ./data/vikunja_files:/app/vikunja/files
+
+  compass_bot:
+    build: ./bot
+    image: ${COMPASS_BOT_IMAGE:-compass_bot:local}
+    container_name: compass_bot
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+      firefly:
+        condition: service_started
+      vikunja:
+        condition: service_started
+    environment:
+      - FIREFLY_URL=http://firefly:8080
+      - FIREFLY_TOKEN=${FIREFLY_TOKEN:?Set FIREFLY_TOKEN in .env}
+      - VIKUNJA_URL=http://vikunja:3456
+      - VIKUNJA_TOKEN=${VIKUNJA_TOKEN:?Set VIKUNJA_TOKEN in .env}
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:?Set OLLAMA_MODEL in .env}
+      - OLLAMA_WARMUP_TIMEOUT=${OLLAMA_WARMUP_TIMEOUT:-30}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:?Set TELEGRAM_TOKEN in .env}
+      - TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:?Set TELEGRAM_ALLOWED_USER_IDS in .env}
+      - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
+      - ATTACHMENTS_DIR=/app/attachments
+      - TZ=${TZ:-Asia/Kolkata}
+    volumes:
+      - ./data/bot_attachments:/app/attachments
+
+  open-webui:
+    image: ${OPEN_WEBUI_IMAGE:?Set OPEN_WEBUI_IMAGE in .env}
+    container_name: compass_open_webui
+    restart: unless-stopped
+    profiles: ["ai-webui"]
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - PIPELINES_URL=http://pipelines:9099/v1
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?Set PIPELINES_API_KEY in .env}
+    volumes:
+      - ./data/openwebui:/app/backend/data
+    depends_on:
+      - ollama
+      - pipelines
+
+  pipelines:
+    image: ${PIPELINES_IMAGE:?Set PIPELINES_IMAGE in .env}
+    container_name: compass_pipelines
+    restart: unless-stopped
+    profiles: ["ai-webui"]
+    volumes:
+      - ./openwebui/pipelines:/app/pipelines
+      - ./data/rag/chroma_db:/rag/chroma_db
+      - ./data/rag/hf_cache:/root/.cache/huggingface
+    environment:
+      - PIPELINES_DIR=/app/pipelines
+      - PIPELINES_REQUIREMENTS_PATH=/app/pipelines/requirements.txt
+      - ANONYMIZED_TELEMETRY=False

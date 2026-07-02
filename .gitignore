@@ -1,0 +1,48 @@
+# Secrets
+.env
+*.env
+!.env.example
+!.env.sample
+bot/accounts_local.py
+.backup_passphrase
+
+# Runtime data
+data/
+attachments/
+firefly/db_data/
+firefly/uploads/
+vikunja/db_data/
+vikunja/files/
+ollama/data/
+openwebui/data/
+openwebui/rag/chroma_db/
+openwebui/rag/hf_cache/
+openwebui/pipelines/*/valves.json
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# Tooling
+.claude/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs and local backups
+*.log
+logs/
+*.sql
+*.sql.gz
+*.tar.gz
+*.gpg
