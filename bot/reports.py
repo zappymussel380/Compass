@@ -40,27 +40,19 @@ def date_range(period: str):
 # ---------- Balance report ----------
 
 def balances(client: FireflyClient) -> str:
-    client._ensure_cache(refresh=True)
-    cache = client._account_cache  # {name: {id, type}}
+    # The account list endpoint already includes balances — one call per type.
+    accounts = client.list_accounts()
 
-    # Fetch detailed balance info per account
     bank_lines = []
     card_lines = []
     bank_total = 0.0
     card_total = 0.0
 
-    for name, info in sorted(cache.items()):
-        resp = client._request(
-            "GET",
-            f"/api/v1/accounts/{info['id']}",
-            action=f"Fetch account {name}",
-            timeout=10,
-        )
-        attrs = resp.json()["data"]["attributes"]
-        balance = float(attrs.get("current_balance") or 0)
-        line = f"  `{md(name):<22}` ₹{balance:>12,.2f}"
+    for acc in sorted(accounts, key=lambda a: a["name"]):
+        balance = acc["current_balance"]
+        line = f"  `{md(acc['name']):<22}` ₹{balance:>12,.2f}"
 
-        if info["type"] == "asset":
+        if acc["type"] == "asset":
             bank_lines.append(line)
             bank_total += balance
         else:  # liability

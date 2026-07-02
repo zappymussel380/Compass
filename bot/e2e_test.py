@@ -101,9 +101,9 @@ def main():
             source_canonical=src_value,
             destination_canonical=dst_canonical,
         )
-        txn_id = result["data"]["id"]
+        txn_id = result["id"]
         print(f"✅ Transaction created. ID: {txn_id}")
-        base_url = os.environ.get("FIREFLY_PUBLIC_URL") or os.environ.get("FIREFLY_APP_URL")
+        base_url = os.environ.get("FIREFLY_APP_URL")
         if base_url:
             print(f"   View at: {base_url.rstrip('/')}/transactions/show/{txn_id}")
     except FireflyError as e:

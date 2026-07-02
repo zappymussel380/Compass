@@ -1264,11 +1264,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         source_canonical=p["src_canonical"],
                         destination_canonical=p["dst_canonical"],
                     )
-                    # result["data"] check depends on if your create_transaction also unwraps data
-                    # If create_transaction returns resp.json() without unwrapping, keep ["data"]
-                    res_data = result.get("data", result) 
-                    txn_id = res_data["id"]
-                    journal_id = res_data["attributes"]["transactions"][0].get("transaction_journal_id", txn_id)
+                    txn_id = result["id"]
+                    journal_id = result["attributes"]["transactions"][0].get("transaction_journal_id", txn_id)
                     status_label = f"Logged at {now_str}. Transaction #{txn_id}"
 
                 ok, fail = await upload_pending_attachments(context, pending_id, str(journal_id))

@@ -45,24 +45,40 @@ class FireflyClient:
 
     # ---------- Account lookup ----------
 
-    def _fetch_all_accounts(self):
-        """Pull all asset + liability accounts. Build name → {id, type} map."""
-        cache = {}
+    def list_accounts(self) -> list[dict]:
+        """All asset + liability accounts with current balances. Paginated."""
+        accounts = []
         for acc_type in ("asset", "liability"):
-            resp = self._request(
-                "GET",
-                "/api/v1/accounts",
-                action=f"Fetch {acc_type} accounts",
-                params={"type": acc_type, "limit": 100},
-                timeout=10,
-            )
-            for entry in resp.json().get("data", []):
-                name = entry["attributes"]["name"]
-                cache[name] = {
-                    "id": int(entry["id"]),
-                    "type": entry["attributes"]["type"],
-                }
-        return cache
+            page = 1
+            while True:
+                resp = self._request(
+                    "GET",
+                    "/api/v1/accounts",
+                    action=f"Fetch {acc_type} accounts",
+                    params={"type": acc_type, "limit": 100, "page": page},
+                    timeout=15,
+                )
+                body = resp.json()
+                for entry in body.get("data", []):
+                    attrs = entry["attributes"]
+                    accounts.append({
+                        "id": int(entry["id"]),
+                        "name": attrs["name"],
+                        "type": attrs["type"],
+                        "current_balance": float(attrs.get("current_balance") or 0),
+                    })
+                meta = body.get("meta", {}).get("pagination", {})
+                if page >= meta.get("total_pages", 1):
+                    break
+                page += 1
+        return accounts
+
+    def _fetch_all_accounts(self):
+        """Build the name → {id, type} lookup cache."""
+        return {
+            acc["name"]: {"id": acc["id"], "type": acc["type"]}
+            for acc in self.list_accounts()
+        }
 
     def _ensure_cache(self, refresh: bool = False):
         if self._account_cache is None or refresh:
@@ -154,7 +170,7 @@ class FireflyClient:
             json=payload,
             timeout=15,
         )
-        return resp.json()
+        return resp.json()["data"]
 
     def search_transactions(self, query: str):
         """Search transactions using keywords in notes/description."""
@@ -195,7 +211,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     client = FireflyClient()
-    accounts = client._fetch_all_accounts()
+    accounts = client.list_accounts()
     print(f"Connected. Found {len(accounts)} accounts:")
-    for name, info in sorted(accounts.items()):
-        print(f"  {info['id']:>3}  {info['type']:>11}  {name}")
+    for acc in sorted(accounts, key=lambda a: a["name"]):
+        print(f"  {acc['id']:>3}  {acc['type']:>11}  {acc['name']}")
