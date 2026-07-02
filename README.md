@@ -144,6 +144,8 @@ The root `.env` file controls the stack. Important settings:
 | `OLLAMA_MODEL` | Local model used for parsing. |
 | `OLLAMA_WARMUP_TIMEOUT` | Timeout for one-time startup prompt warmup. |
 | `TZ` | Timezone for scheduled digest/reminder jobs. |
+| `DIGEST_TIME` | Daily task digest time (`HH:MM`). Empty disables it. |
+| `REMINDER_TIMES` | Optional comma-separated nudge times, e.g. `12:00,17:00,22:00`. Off by default. |
 
 By default, web ports bind to localhost. If you change `HOST_BIND` to expose
 services on a network, protect the host with a firewall, VPN, or reverse proxy.
@@ -295,6 +297,18 @@ Read [SECURITY.md](SECURITY.md) before publishing a fork or exposing the web UIs
 - prints the remaining manual setup commands
 
 The long-term goal is a single-line installer that can prepare the full stack.
+
+## Running Tests
+
+The test suite runs entirely offline — Firefly, Vikunja, Ollama, and Telegram
+are mocked, and the backup script is exercised against stub binaries. No
+credentials are needed.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/
+```
 
 ## Development Checks
 
