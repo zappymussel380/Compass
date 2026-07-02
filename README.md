@@ -59,9 +59,9 @@ which is ignored by git.
 |   |-- vikunja_client.py
 |   |-- reports.py
 |   `-- attachment.py
+|-- install.sh                # interactive one-command installer
 |-- openwebui/pipelines/      # optional Open WebUI pipeline
 |-- scripts/
-|   |-- install.sh            # installer scaffold
 |   `-- backup.sh             # encrypted backup helper
 `-- docs/
     |-- INSTALL.md
@@ -81,7 +81,23 @@ multi-tenant SaaS app.
 
 ## Quick Start
 
-Clone the repository and create your environment file:
+The interactive installer walks through everything — dependencies, secrets,
+bank account aliases, model download, first-run tokens, and verification:
+
+```bash
+git clone <repo-url> compass
+cd compass
+./install.sh
+```
+
+It never overwrites an existing `.env` without asking, can be re-run any time
+to resume or reconfigure, and `./install.sh --uninstall` tears the stack down
+with explicit confirmations. Deliberately, there is no `curl | bash` one-liner:
+for software that handles your finances, clone it and read what you run.
+
+## Manual Setup
+
+Prefer to do it by hand? Create your environment file:
 
 ```bash
 cp .env.example .env
@@ -286,18 +302,6 @@ also be explicitly listed in `TELEGRAM_ALLOWED_CHAT_IDS`.
 
 Read [SECURITY.md](SECURITY.md) before publishing a fork or exposing the web UIs.
 
-## Installer Status
-
-[scripts/install.sh](scripts/install.sh) is an installer scaffold. It currently:
-
-- checks Docker and Docker Compose
-- creates `.env` from `.env.example` if needed
-- creates runtime directories
-- refuses to proceed while required image placeholders remain
-- prints the remaining manual setup commands
-
-The long-term goal is a single-line installer that can prepare the full stack.
-
 ## Running Tests
 
 The test suite runs entirely offline — Firefly, Vikunja, Ollama, and Telegram
@@ -317,7 +321,7 @@ The basic local validation commands are:
 ```bash
 python3 -m py_compile bot/*.py openwebui/pipelines/*.py
 docker compose --env-file .env.example config --quiet
-bash -n scripts/install.sh scripts/backup.sh bot/test.sh bot/test_todo.sh
+bash -n install.sh scripts/backup.sh bot/test.sh bot/test_todo.sh
 docker build -t compass_bot:review ./bot
 ```
 
