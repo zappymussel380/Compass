@@ -31,6 +31,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     level=logging.INFO,
 )
+# httpx logs full request URLs at INFO — for Telegram that includes the bot
+# token. Never let it into the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("compass")
 
 def fmt_time(iso_str):
