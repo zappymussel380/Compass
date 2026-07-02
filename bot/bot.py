@@ -587,7 +587,17 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         data = await asyncio.to_thread(firefly.get_transaction, txn_id)
-        attr = data["attributes"]["transactions"][0]
+        splits = data["attributes"]["transactions"]
+        if len(splits) != 1:
+            # Updating would replace the whole group with a single split,
+            # silently deleting the others.
+            await update.message.reply_text(
+                f"✏️ Transaction #{md(txn_id)} has {len(splits)} splits. "
+                "Edit it in the Firefly web UI instead.",
+                parse_mode="Markdown",
+            )
+            return
+        attr = splits[0]
         source_name = attr.get("source_name") or ""
         destination_name = attr.get("destination_name") or ""
         parsed_type = attr["type"]

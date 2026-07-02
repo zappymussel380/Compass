@@ -56,10 +56,10 @@ tar --exclude='.env' \
   README.md docs scripts bot openwebui docker-compose.yml .env.example .gitignore
 
 echo "Encrypting..."
-PASSPHRASE="$(cat "$PASSPHRASE_FILE")"
 for f in "$BACKUP_DIR"/*_"$DATE".*; do
   [ -f "$f" ] || continue
-  gpg --batch --yes --passphrase "$PASSPHRASE" \
+  # --passphrase-file keeps the passphrase out of the process list
+  gpg --batch --yes --passphrase-file "$PASSPHRASE_FILE" \
     --symmetric --cipher-algo AES256 \
     -o "$f.gpg" "$f"
   rm "$f"
@@ -70,7 +70,8 @@ if [ -n "$RCLONE_REMOTE" ]; then
   rclone copy "$BACKUP_DIR" "$RCLONE_REMOTE" \
     --include "*_${DATE}*.gpg" \
     --transfers 4
-  rclone delete "$RCLONE_REMOTE" --min-age "${RETENTION_DAYS}d"
+  # Only expire our own encrypted backups, never other files on the remote
+  rclone delete "$RCLONE_REMOTE" --include "*.gpg" --min-age "${RETENTION_DAYS}d"
 fi
 
 find "$BACKUP_DIR" -type f -name "*.gpg" -mtime +"$RETENTION_DAYS" -delete
