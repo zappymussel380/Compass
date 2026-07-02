@@ -1,6 +1,4 @@
-""" Compass — personal finance + todo Telegram bot.
-v3: adds Vikunja todo flow, daily digest, /tasks command.
-"""
+"""Compass — personal finance + todo Telegram bot."""
 
 import asyncio
 import json
@@ -34,13 +32,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger("compass")
-
-def fmt_date(iso_str):
-    """Returns DD-MM-YYYY from Firefly ISO string."""
-    try:
-        return datetime.fromisoformat(iso_str).strftime("%d-%m-%Y")
-    except Exception:
-        return iso_str
 
 def fmt_time(iso_str):
     """Returns HH:MM from Firefly ISO string."""
@@ -1078,8 +1069,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     parts = data.split(":", 2)
     action = parts[0]
-
-    # Define these early to avoid NameErrors
     pending_id = parts[1] if len(parts) > 1 else None
     extra = parts[2] if len(parts) > 2 else None
 
@@ -1137,7 +1126,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⌛ Expired or already handled.")
         return
 
-    # 6. If we found a transaction, refresh its timer and handle the specific button
+    # Refresh the timer and handle the specific button
     touch(pending_id)
     if p.get("kind") == "todo":
         original_card = format_todo_card(p["parsed"])
@@ -1234,7 +1223,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         p["state"] = "processing"
         touch(pending_id)
-        log.info(f"🔒 [SHIELD] Locked ID {pending_id} for processing.")
 
         try:
             await query.edit_message_text(f"{original_card}\n\n⏳ _Processing..._", parse_mode="Markdown")
@@ -1332,7 +1320,7 @@ async def post_init(application: Application):
     asyncio.create_task(asyncio.to_thread(warm_model, OLLAMA_WARMUP_TIMEOUT))
 
 def main():
-    log.info("Starting Compass bot v3...")
+    log.info("Starting Compass bot...")
     app = (Application.builder()
            .token(TELEGRAM_TOKEN)
            .post_init(post_init)

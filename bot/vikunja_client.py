@@ -21,7 +21,7 @@ PROJECT_ALIASES = {
 }
 
 
-# Map Vikunja's repeat_mode integers to readable strings
+# Readable recurrence mode → Vikunja repeat_mode integer:
 # 0 = repeat after each completion (e.g. every 7 days from when last done)
 # 1 = repeat monthly (1st of every month, etc.)
 # 2 = repeat from the original due date
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    client = VikunjaClient(base_url=os.environ.get("VIKUNJA_URL_HOST"))
+    client = VikunjaClient()
     projects = client._fetch_projects()
     print(f"Connected. Found {len(projects)} projects:")
     for name, pid in sorted(projects.items()):
