@@ -96,7 +96,9 @@ attachment_handler = AttachmentHandler()
 # Pending state — for both transactions and todos
 PENDING: dict[str, dict] = {}
 ACTIVE_BY_USER: dict[int, str] = {}
-TIMEOUT_SECONDS = 180
+# How long a pending card stays alive without activity. CPU-only Ollama can
+# take 1-2 minutes per parse, so keep this comfortably above that.
+TIMEOUT_SECONDS = int(os.environ.get("PENDING_TIMEOUT_SECONDS", "600"))
 
 # When user taps Defer on a task, we need to wait for their date input.
 # Map user_id → task_id they're deferring + chat/message of the digest line.
@@ -219,6 +221,13 @@ DISPLAY_TYPE = {
     "transfer":   ("Transfer","🔀"),
 }
 
+def fmt_amount(value) -> str:
+    """₹1,250 for whole amounts, ₹1,250.50 otherwise (no trailing .0)."""
+    value = float(value)
+    if value.is_integer():
+        return f"{int(value):,}"
+    return f"{value:,.2f}"
+
 PRIORITY_LABEL = {
     0: "—", 1: "low", 2: "medium", 3: "high", 4: "urgent",
 }
@@ -226,7 +235,7 @@ PRIORITY_LABEL = {
 def format_txn_card(parsed: dict, src_canonical: str | None,
                     dst_canonical: str | None) -> str:
     label, emoji = DISPLAY_TYPE.get(parsed["type"], ("?", "❓"))
-    lines = [f"{emoji} *{label}*  ₹{parsed['amount']:,}", ""]
+    lines = [f"{emoji} *{label}*  ₹{fmt_amount(parsed['amount'])}", ""]
     if parsed["type"] == "withdrawal":
         lines.append(f"From: `{md(src_canonical or '(pick one)')}`")
         lines.append(f"To:   {md(parsed.get('destination_raw', '?'))}")
@@ -950,12 +959,25 @@ async def handle_edit_correction(update, context, pending_id: str, correction: s
         await update.message.reply_text("🤔 Couldn't apply that correction. Try rephrasing.")
         return
 
+    old_parsed = p["parsed"]
     p["parsed"] = new_parsed
-    src_status, src_value = resolve_account(new_parsed.get("source_raw") or "")
-    p["src_canonical"] = src_value if src_status == "match" else None
+
+    def resolve_slot(raw_new, raw_old, current):
+        """Re-resolve an account slot after a correction. The edit model only
+        sees the raw text fields, so an unchanged raw must not wipe an
+        account the user explicitly picked via buttons."""
+        status, value = resolve_account(raw_new or "")
+        if status == "match":
+            return value
+        if (raw_new or "") == (raw_old or ""):
+            return current
+        return None
+
+    p["src_canonical"] = resolve_slot(
+        new_parsed.get("source_raw"), old_parsed.get("source_raw"), p["src_canonical"])
     if new_parsed["type"] in ("transfer", "deposit"):
-        ds, dv = resolve_account(new_parsed.get("destination_raw") or "")
-        p["dst_canonical"] = dv if ds == "match" else None
+        p["dst_canonical"] = resolve_slot(
+            new_parsed.get("destination_raw"), old_parsed.get("destination_raw"), p["dst_canonical"])
     else:
         p["dst_canonical"] = None
 
