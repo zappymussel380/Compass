@@ -60,8 +60,22 @@ OLLAMA_URL = os.environ["OLLAMA_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
 OLLAMA_WARMUP_TIMEOUT = int(os.environ.get("OLLAMA_WARMUP_TIMEOUT", "30"))
 
-DIGEST_HOUR = 11
-DIGEST_MINUTE = 0
+def _parse_hhmm(value: str) -> dtime:
+    """Parse 'HH:MM' into a timezone-aware time for job scheduling."""
+    try:
+        hour, minute = value.strip().split(":")
+        return dtime(hour=int(hour), minute=int(minute), tzinfo=BOT_TIMEZONE)
+    except (ValueError, AttributeError):
+        raise ValueError(
+            f"Invalid time {value!r} — expected HH:MM (e.g. 11:00)"
+        ) from None
+
+# Daily task digest time; set DIGEST_TIME= (empty) to disable.
+DIGEST_TIME = os.environ.get("DIGEST_TIME", "11:00").strip()
+# Optional comma-separated 'log your stuff' nudges, e.g. 12:00,17:00,22:00.
+REMINDER_TIMES = [
+    t.strip() for t in os.environ.get("REMINDER_TIMES", "").split(",") if t.strip()
+]
 
 HERE = os.path.dirname(__file__)
 def _load(name):
@@ -1328,25 +1342,18 @@ def main():
            .write_timeout(15)
            .build())
 
-    # Schedule daily digest in the configured bot timezone.
-    app.job_queue.run_daily(
-        daily_digest,
-        time=dtime(hour=DIGEST_HOUR, minute=DIGEST_MINUTE, tzinfo=BOT_TIMEZONE),
-        name="daily_digest",
-    )
-
-    # Scheduled reminder nudges in the configured bot timezone.
-    reminder_times = [
-        dtime(hour=12, minute=0, tzinfo=BOT_TIMEZONE),  # 12:00 PM
-        dtime(hour=17, minute=0, tzinfo=BOT_TIMEZONE),  # 5:00 PM
-        dtime(hour=22, minute=0, tzinfo=BOT_TIMEZONE),  # 10:00 PM
-    ]
-
-    for i, t in enumerate(reminder_times):
+    # Scheduled jobs run in the configured bot timezone.
+    if DIGEST_TIME:
+        app.job_queue.run_daily(
+            daily_digest,
+            time=_parse_hhmm(DIGEST_TIME),
+            name="daily_digest",
+        )
+    for i, t in enumerate(REMINDER_TIMES):
         app.job_queue.run_daily(
             send_ping_reminder,
-            time=t,
-            name=f"reminder_ping_{i}"
+            time=_parse_hhmm(t),
+            name=f"reminder_ping_{i}",
         )
 
     app.add_handler(CommandHandler("start", cmd_start))
