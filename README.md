@@ -26,7 +26,7 @@ copies of [Firefly III](https://www.firefly-iii.org/) (money) and
 [Vikunja](https://vikunja.io/) (tasks) — two well-regarded open-source apps
 that give you proper web dashboards whenever you want the big picture.
 
-Compass was built for real daily use by its author, not as a tech demo. The
+Compass was built for and shaped by real daily use, not as a tech demo. The
 rough edges that only show up in week three of actually living with a tool —
 corrections, receipts, card bills, nagging reminders — are the parts that got
 the most attention.
@@ -179,10 +179,10 @@ Most use is just plain messages, but a few commands are handy:
 
 ## Project status
 
-Compass is young. It's used daily by its author and the core flows are tested
-live (logging, corrections, receipts, card payments, reports, tasks,
-reminders), but before trusting it with important data you should run through
-those flows yourself on your own install — and set up backups early. Issues
+Compass is young. It's in real daily use and the core flows are tested live
+(logging, corrections, receipts, card payments, reports, tasks, reminders),
+but before trusting it with important data you should run through those flows
+yourself on your own install — and set up backups early. Issues
 and bug reports are welcome.
 
 ## Contributing & license
