@@ -1,10 +1,7 @@
-import pytest
+from accounts import AccountResolver, resolve_account
 
-import accounts
-from accounts import resolve_account
-
-# The map is deployment-specific (accounts_local.py overrides it when present),
-# so every test pins a known map instead of relying on whichever one loaded.
+# Each user carries their own resolver, so tests pin a known map instead of
+# relying on whichever deployment map loaded.
 TEST_ACCOUNTS = {
     "Primary Checking": ["checking", "main bank", "bank"],
     "Bank A": ["shared"],
@@ -12,35 +9,49 @@ TEST_ACCOUNTS = {
     "Cash": ["cash", "wallet"],
 }
 
-
-@pytest.fixture(autouse=True)
-def pinned_accounts(monkeypatch):
-    monkeypatch.setattr(accounts, "ACCOUNTS", TEST_ACCOUNTS)
-    monkeypatch.setattr(accounts, "_REVERSE", accounts._build_reverse_index())
+R = AccountResolver(TEST_ACCOUNTS)
 
 
 def test_exact_alias_matches():
-    assert resolve_account("checking") == ("match", "Primary Checking")
+    assert R.resolve("checking") == ("match", "Primary Checking")
 
 
 def test_multiword_alias():
-    assert resolve_account("main bank") == ("match", "Primary Checking")
+    assert R.resolve("main bank") == ("match", "Primary Checking")
 
 
 def test_case_and_whitespace_insensitive():
-    assert resolve_account("  CASH  ") == ("match", "Cash")
+    assert R.resolve("  CASH  ") == ("match", "Cash")
 
 
 def test_unknown_alias():
-    assert resolve_account("garbage") == ("unknown", None)
+    assert R.resolve("garbage") == ("unknown", None)
 
 
 def test_empty_input():
-    assert resolve_account("") == ("unknown", None)
-    assert resolve_account(None) == ("unknown", None)
+    assert R.resolve("") == ("unknown", None)
+    assert R.resolve(None) == ("unknown", None)
 
 
 def test_ambiguous_alias():
-    status, names = resolve_account("shared")
+    status, names = R.resolve("shared")
     assert status == "ambiguous"
     assert sorted(names) == ["Bank A", "Bank B"]
+
+
+def test_choices_are_sorted_and_stable():
+    assert R.choices == sorted(TEST_ACCOUNTS)
+
+
+def test_per_user_isolation():
+    other = AccountResolver({"Secret Bank": ["secret"]})
+    assert R.resolve("secret") == ("unknown", None)
+    assert other.resolve("checking") == ("unknown", None)
+    assert "Secret Bank" not in R.choices
+
+
+def test_legacy_module_helper_still_resolves():
+    # resolve_account() resolves against the module-level map (used only as
+    # the migration source); just assert it returns the tuple shape.
+    status, _ = resolve_account("nonexistent-alias-xyz")
+    assert status == "unknown"

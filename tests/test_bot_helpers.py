@@ -114,20 +114,27 @@ def test_attachment_note():
 
 # ---------- account picker callback data ----------
 
+PICKER_CHOICES = sorted([
+    "A Very Long Bank Account Name That Tests Limits",
+    "Cash", "Main Checking", "Rewards Card", "Savings",
+])
+
+
 def test_picker_callback_data_within_telegram_limit():
-    kb = bot.kb_account_picker("abcdef12", "src")
+    kb = bot.kb_account_picker("abcdef12", "src", PICKER_CHOICES)
     for row in kb.inline_keyboard:
         for button in row:
             assert len(button.callback_data.encode()) <= 64
 
 
 def test_picker_indices_map_back_to_account_names():
-    kb = bot.kb_account_picker("abcdef12", "src")
+    kb = bot.kb_account_picker("abcdef12", "src", PICKER_CHOICES)
     buttons = [b for row in kb.inline_keyboard for b in row
                if b.callback_data.startswith("picksrc:")]
+    assert buttons
     for button in buttons:
         idx = int(button.callback_data.split(":", 2)[2])
-        assert bot.ACCOUNT_CHOICES[idx] == button.text
+        assert PICKER_CHOICES[idx] == button.text
 
 
 # ---------- schedule parsing ----------

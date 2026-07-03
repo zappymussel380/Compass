@@ -645,10 +645,13 @@ make_dirs() {
     "$ROOT_DIR/data/bot_attachments" \
     "$ROOT_DIR/data/openwebui" \
     "$ROOT_DIR/data/rag/chroma_db" \
-    "$ROOT_DIR/data/rag/hf_cache"
+    "$ROOT_DIR/data/rag/hf_cache" \
+    "$ROOT_DIR/users"
   # the bot and Vikunja containers run unprivileged as UID 1000
   chown 1000 "$ROOT_DIR/data/bot_attachments" 2>/dev/null \
     || warn "Could not chown data/bot_attachments to UID 1000 — receipts may fail to save."
+  chown 1000 "$ROOT_DIR/users" 2>/dev/null \
+    || warn "Could not chown users/ to UID 1000 — legacy-config migration will re-run in memory each start."
   chown 1000 "$ROOT_DIR/data/vikunja_files" 2>/dev/null \
     || warn "Could not chown data/vikunja_files to UID 1000 — Vikunja will fail to start."
 }

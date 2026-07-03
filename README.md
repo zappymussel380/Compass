@@ -91,6 +91,7 @@ quietly expires.
 **Your rules**
 - Works in any currency — you pick it once during setup
 - Only the Telegram accounts you allowlist can talk to the bot; everyone else gets silence
+- Multiple people can share one install — each with fully separate finances and tasks
 - Full web dashboards (Firefly III and Vikunja) for charts, budgets, and bulk editing
 
 ## What you need
@@ -172,6 +173,8 @@ Most use is just plain messages, but a few commands are handy:
   setup, architecture, and every configuration setting.
 - **[docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md)** — account nicknames,
   currency, categories, and tuning the AI prompts to your spending language.
+- **[docs/MULTI-USER.md](docs/MULTI-USER.md)** — sharing one install with
+  family: adding and removing users, how isolation works.
 - **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — day-2 care: logs, backups,
   attachments, scheduled messages.
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — running the test suite and

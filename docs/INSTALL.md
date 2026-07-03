@@ -193,11 +193,15 @@ which is ignored by git.
 |-- install.sh                # interactive one-command installer
 |-- openwebui/pipelines/      # optional Open WebUI pipeline
 |-- scripts/
-|   `-- backup.sh             # encrypted backup helper
+|   |-- backup.sh             # encrypted backup helper
+|   |-- add-user.sh           # provision an additional user (multi-user)
+|   `-- remove-user.sh        # remove a user and their data
+|-- users/                    # per-user bot config (gitignored)
 `-- docs/
     |-- INSTALL.md
     |-- CUSTOMIZATION.md
     |-- OPERATIONS.md
+    |-- MULTI-USER.md
     `-- DEVELOPMENT.md
 ```
 
@@ -209,7 +213,7 @@ The root `.env` file controls the stack. Important settings:
 | --- | --- |
 | `HOST_BIND` | Host address for web ports. Defaults to `127.0.0.1`. |
 | `TELEGRAM_TOKEN` | Bot token from BotFather. |
-| `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot. |
+| `TELEGRAM_ALLOWED_USER_IDS` | Legacy single-user allowlist; superseded by per-user files in `users/` (see docs/MULTI-USER.md). Migrated automatically. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | Optional group chat allowlist. Private chats work without this. |
 | `FIREFLY_APP_KEY` | Firefly application key. |
 | `FIREFLY_TOKEN` | Firefly personal access token used by the bot. |
