@@ -52,6 +52,15 @@ make the directory writable by that UID:
 sudo chown -R 1000 data/bot_attachments
 ```
 
+## Attachments
+
+Receipts are accepted as photos or documents in these formats: PDF, JPG/JPEG,
+PNG, WEBP. Several files can be attached to one transaction. Files are kept
+locally only while the transaction is pending: successful uploads are deleted
+from the bot attachment directory immediately, failed uploads remain retryable
+until you retry or discard them, and stale staging files are purged when the
+bot starts.
+
 ## Telegram Privacy
 
 The bot checks `TELEGRAM_ALLOWED_USER_IDS` for every update. It replies in private
