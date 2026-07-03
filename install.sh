@@ -112,7 +112,7 @@ preflight() {
   if [ ! -t 0 ]; then
     die "This installer is interactive and needs a terminal.
   Clone the repo and run it directly:
-    git clone <repo-url> && cd compass && ./install.sh"
+    git clone https://github.com/zappymussel380/Compass.git compass && cd compass && ./install.sh"
   fi
 
   [ -f "$ROOT_DIR/docker-compose.yml" ] \

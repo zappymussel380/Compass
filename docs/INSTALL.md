@@ -14,7 +14,7 @@ financial data; clone the repository and read what you run.
 ## Scripted Install
 
 ```bash
-git clone <repo-url> compass
+git clone https://github.com/zappymussel380/Compass.git compass
 cd compass
 ./install.sh
 ```

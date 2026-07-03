@@ -110,7 +110,7 @@ use. With a GPU it's near-instant.
 ## Getting started
 
 ```bash
-git clone <repo-url> compass
+git clone https://github.com/zappymussel380/Compass.git compass
 cd compass
 ./install.sh
 ```
