@@ -222,10 +222,14 @@ class AttachmentHandler:
         self,
         journal_id: str,
         local_paths: list[str],
+        token: str | None = None,
     ) -> tuple[int, int, list[str]]:
         """
         Registers pending files with Firefly III, uploads their bytes, and
         deletes the temporary local copies after successful upload.
+
+        `token` is the Firefly PAT of the transaction's owner so the upload
+        lands in their data; falls back to the legacy env token.
 
         Returns (success_count, fail_count, failed_paths). Successfully uploaded
         files are deleted immediately; failed files are kept for retry.
@@ -238,7 +242,7 @@ class AttachmentHandler:
 
         async with httpx.AsyncClient(
             base_url=FIREFLY_BASE_URL,
-            headers={"Authorization": f"Bearer {FIREFLY_TOKEN}"},
+            headers={"Authorization": f"Bearer {token or FIREFLY_TOKEN}"},
             timeout=30.0,
         ) as client:
             for path_str in local_paths:

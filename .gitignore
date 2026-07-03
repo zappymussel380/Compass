@@ -5,6 +5,7 @@
 !.env.sample
 .env.bak-*
 bot/accounts_local.py
+users/
 .backup_passphrase
 
 # Local machine-specific compose tweaks (e.g. GPU) written by install.sh

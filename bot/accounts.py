@@ -1,15 +1,20 @@
 """
 Account resolver: maps fuzzy user-typed aliases to canonical Firefly III account names.
-Returns one of:
+
+Resolution returns one of:
   ('match', canonical_name)             — single unambiguous match
   ('ambiguous', [name1, name2, ...])    — alias is ambiguous, bot must ask
   ('unknown', None)                     — nothing matched
+
+Each bot user gets their own AccountResolver built from their users/<id>.json
+"accounts" map, so one person's bank names never leak into another's picker.
+
+The module-level ACCOUNTS map below is the legacy single-user layout: public
+clones ship the generic map, and a private deployment may override it with a
+gitignored bot/accounts_local.py. It is used only as the migration source for
+deployments that predate per-user config.
 """
 
-# Canonical name → list of aliases (all lowercase).
-# Public clones use this generic map. For a private deployment, create
-# bot/accounts_local.py with ACCOUNTS = {...}; it is ignored by git and loaded
-# automatically.
 ACCOUNTS = {
     "Primary Checking": ["checking", "main bank", "bank", "salary"],
     "Savings Account": ["savings", "save"],
@@ -27,37 +32,37 @@ except ModuleNotFoundError as exc:
 else:
     ACCOUNTS = accounts_local.ACCOUNTS
 
-def _build_reverse_index():
-    """Build alias → [canonical_names] map. Multi-valued entries = ambiguous."""
-    index = {}
-    for canonical, aliases in ACCOUNTS.items():
-        for alias in aliases:
-            index.setdefault(alias, []).append(canonical)
-    return index
+
+class AccountResolver:
+    """Alias → canonical account resolution over one user's account map."""
+
+    def __init__(self, accounts: dict[str, list[str]]):
+        self.accounts = accounts
+        # Stable, sorted list so picker buttons can reference accounts by
+        # index — full names would overflow Telegram's 64-byte callback_data.
+        self.choices = sorted(accounts)
+        self._reverse: dict[str, list[str]] = {}
+        for canonical, aliases in accounts.items():
+            for alias in aliases:
+                self._reverse.setdefault(alias.strip().lower(), []).append(canonical)
+
+    def resolve(self, raw: str):
+        if not raw:
+            return ("unknown", None)
+        matches = self._reverse.get(raw.strip().lower())
+        if not matches:
+            return ("unknown", None)
+        if len(matches) == 1:
+            return ("match", matches[0])
+        return ("ambiguous", matches)
 
 
-_REVERSE = _build_reverse_index()
+_LEGACY = AccountResolver(ACCOUNTS)
 
 
 def resolve_account(raw: str):
-    """
-    Resolve a raw alias string to a canonical account name.
-    Returns (status, value):
-        ('match', 'Primary Checking')
-        ('ambiguous', ['Primary Checking', 'Business Checking'])
-        ('unknown', None)
-    """
-    if not raw:
-        return ('unknown', None)
-
-    key = raw.strip().lower()
-    matches = _REVERSE.get(key)
-
-    if not matches:
-        return ('unknown', None)
-    if len(matches) == 1:
-        return ('match', matches[0])
-    return ('ambiguous', matches)
+    """Legacy helper resolving against the module-level ACCOUNTS map."""
+    return _LEGACY.resolve(raw)
 
 
 # Quick self-test — run `python3 accounts.py` to verify

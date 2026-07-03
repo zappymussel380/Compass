@@ -115,21 +115,27 @@ services:
         condition: service_started
     environment:
       - FIREFLY_URL=http://firefly:8080
-      - FIREFLY_TOKEN=${FIREFLY_TOKEN:?Set FIREFLY_TOKEN in .env}
+      # Legacy single-user token; per-user tokens live in ./users/*.json.
+      - FIREFLY_TOKEN=${FIREFLY_TOKEN:-}
       - VIKUNJA_URL=http://vikunja:3456
-      - VIKUNJA_TOKEN=${VIKUNJA_TOKEN:?Set VIKUNJA_TOKEN in .env}
+      - VIKUNJA_TOKEN=${VIKUNJA_TOKEN:-}
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:?Set OLLAMA_MODEL in .env}
       - OLLAMA_WARMUP_TIMEOUT=${OLLAMA_WARMUP_TIMEOUT:-30}
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:?Set TELEGRAM_TOKEN in .env}
-      - TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:?Set TELEGRAM_ALLOWED_USER_IDS in .env}
+      # Legacy allowlist; superseded by per-user files in ./users/.
+      - TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:-}
       - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
       - ATTACHMENTS_DIR=/app/attachments
+      - USERS_DIR=/app/users
+      - CURRENCY=${CURRENCY:-INR}
       - DIGEST_TIME=${DIGEST_TIME:-11:00}
       - REMINDER_TIMES=${REMINDER_TIMES:-}
+      - PENDING_TIMEOUT_SECONDS=${PENDING_TIMEOUT_SECONDS:-600}
       - TZ=${TZ:-Asia/Kolkata}
     volumes:
       - ./data/bot_attachments:/app/attachments
+      - ./users:/app/users
 
   open-webui:
     image: ${OPEN_WEBUI_IMAGE:?Set OPEN_WEBUI_IMAGE in .env}

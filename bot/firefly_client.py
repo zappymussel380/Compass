@@ -7,6 +7,8 @@ import os
 import requests
 from datetime import datetime
 
+import currency
+
 
 class FireflyError(Exception):
     """Raised when Firefly returns an error or is unreachable."""
@@ -107,7 +109,7 @@ class FireflyClient:
         txn = {
             "date": parsed.get("date") or datetime.now().isoformat(timespec="seconds"),
             "amount": str(parsed["amount"]),
-            "currency_code": parsed.get("currency", "INR"),
+            "currency_code": parsed.get("currency") or currency.CODE,
             "description": parsed["description"],
             "category_name": parsed.get("category"),
             "tags": parsed.get("tags", []),

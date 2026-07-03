@@ -20,10 +20,11 @@ from telegram.ext import (
     CommandHandler, ContextTypes, filters,
 )
 
-from accounts import resolve_account, ACCOUNTS
-from firefly_client import FireflyClient, FireflyError
-from vikunja_client import VikunjaClient, VikunjaError
+import currency
+from firefly_client import FireflyError
+from vikunja_client import VikunjaError
 from attachment import AttachmentHandler
+from users import UserContext, load_users
 import reports
 
 load_dotenv()
@@ -49,17 +50,14 @@ def fmt_time(iso_str):
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 BOT_TIMEZONE = pytz.timezone(os.environ.get("TZ", "Asia/Kolkata"))
-ALLOWED_USERS = {
-    int(x.strip())
-    for x in os.environ["TELEGRAM_ALLOWED_USER_IDS"].split(",")
-    if x.strip()
-}
+# Per-user contexts: telegram_id → UserContext (own Firefly/Vikunja tokens,
+# own account aliases). Legacy flat env config is migrated inside load_users.
+USERS: dict[int, UserContext] = load_users()
 ALLOWED_CHATS = {
     int(x.strip())
     for x in os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
     if x.strip()
 }
-DIGEST_RECIPIENTS = sorted(ALLOWED_USERS)
 OLLAMA_URL = os.environ["OLLAMA_URL"]
 OLLAMA_MODEL = os.environ["OLLAMA_MODEL"]
 OLLAMA_WARMUP_TIMEOUT = int(os.environ.get("OLLAMA_WARMUP_TIMEOUT", "30"))
@@ -85,13 +83,13 @@ HERE = os.path.dirname(__file__)
 def _load(name):
     with open(os.path.join(HERE, name)) as f:
         return f.read()
-SYSTEM_PROMPT = _load("system_prompt.txt")
-EDIT_PROMPT = _load("edit_prompt.txt")
+# The finance/edit prompts are written against a {currency} placeholder so
+# one deployment-wide CURRENCY setting controls what the model emits.
+SYSTEM_PROMPT = _load("system_prompt.txt").replace("{currency}", currency.CODE)
+EDIT_PROMPT = _load("edit_prompt.txt").replace("{currency}", currency.CODE)
 TODO_PROMPT = _load("todo_prompt.txt")
 DATE_PROMPT = _load("date_prompt.txt")
 
-firefly = FireflyClient()
-vikunja = VikunjaClient()
 attachment_handler = AttachmentHandler()
 
 # Pending state — for both transactions and todos
@@ -222,12 +220,7 @@ DISPLAY_TYPE = {
     "transfer":   ("Transfer","🔀"),
 }
 
-def fmt_amount(value) -> str:
-    """₹1,250 for whole amounts, ₹1,250.50 otherwise (no trailing .0)."""
-    value = float(value)
-    if value.is_integer():
-        return f"{int(value):,}"
-    return f"{value:,.2f}"
+money = currency.money
 
 PRIORITY_LABEL = {
     0: "—", 1: "low", 2: "medium", 3: "high", 4: "urgent",
@@ -236,7 +229,7 @@ PRIORITY_LABEL = {
 def format_txn_card(parsed: dict, src_canonical: str | None,
                     dst_canonical: str | None) -> str:
     label, emoji = DISPLAY_TYPE.get(parsed["type"], ("?", "❓"))
-    lines = [f"{emoji} *{label}*  ₹{fmt_amount(parsed['amount'])}", ""]
+    lines = [f"{emoji} *{label}*  {money(parsed['amount'])}", ""]
     if parsed["type"] == "withdrawal":
         lines.append(f"From: `{md(src_canonical or '(pick one)')}`")
         lines.append(f"To:   {md(parsed.get('destination_raw', '?'))}")
@@ -298,15 +291,14 @@ def kb_todo_confirm(pending_id: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🗑 Cancel", callback_data=f"cancel:{pending_id}"),
     ]])
 
-# Stable, sorted account list so picker buttons can reference accounts by
-# index — full names would overflow Telegram's 64-byte callback_data limit.
-ACCOUNT_CHOICES = sorted(ACCOUNTS)
-
-def kb_account_picker(pending_id: str, slot: str) -> InlineKeyboardMarkup:
+def kb_account_picker(pending_id: str, slot: str, choices: list[str]) -> InlineKeyboardMarkup:
+    """Picker over one user's sorted account list. Buttons carry the index —
+    full names would overflow Telegram's 64-byte callback_data limit — and
+    the callback resolves the index against that same user's list."""
     rows = []
-    for i in range(0, len(ACCOUNT_CHOICES), 2):
+    for i in range(0, len(choices), 2):
         row = [InlineKeyboardButton(name, callback_data=f"pick{slot}:{pending_id}:{idx}")
-               for idx, name in enumerate(ACCOUNT_CHOICES[i:i+2], start=i)]
+               for idx, name in enumerate(choices[i:i+2], start=i)]
         rows.append(row)
     rows.append([InlineKeyboardButton("🗑 Cancel", callback_data=f"cancel:{pending_id}")])
     return InlineKeyboardMarkup(rows)
@@ -374,6 +366,7 @@ async def timeout_watcher(application: Application):
 async def send_or_update_txn_card(update_or_query, context: ContextTypes.DEFAULT_TYPE, pending_id: str, *, edit: bool = False):
     p = PENDING[pending_id]
     parsed = p["parsed"]
+    choices = USERS[p["user_id"]].account_choices
 
     # Check for files queued for this specific transaction
     pending_files = attachment_handler.get_pending_files(context.user_data, pending_id)
@@ -385,10 +378,10 @@ async def send_or_update_txn_card(update_or_query, context: ContextTypes.DEFAULT
     card = format_txn_card(parsed, p["src_canonical"], p["dst_canonical"])
 
     if p["state"] == "awaiting_source_pick":
-        kb = kb_account_picker(pending_id, "src")
+        kb = kb_account_picker(pending_id, "src", choices)
         text = f"{card}{file_note}\n\n_Which source account?_"
     elif p["state"] == "awaiting_dest_pick":
-        kb = kb_account_picker(pending_id, "dst")
+        kb = kb_account_picker(pending_id, "dst", choices)
         text = f"{card}{file_note}\n\n_Which destination account?_"
     else:
         kb = kb_confirm(pending_id)
@@ -410,11 +403,15 @@ async def send_or_update_txn_card(update_or_query, context: ContextTypes.DEFAULT
 def is_authorized(update: Update) -> bool:
     user = update.effective_user
     chat = update.effective_chat
-    if not user or user.id not in ALLOWED_USERS or not chat:
+    if not user or user.id not in USERS or not chat:
         return False
     if chat.type == "private":
         return True
     return chat.id in ALLOWED_CHATS
+
+def uctx(update: Update) -> UserContext:
+    """The per-user context for an already-authorized update."""
+    return USERS[update.effective_user.id]
 
 HAS_DIGIT = re.compile(r"\d")
 
@@ -463,7 +460,7 @@ Add `firm` or `personal` after a period:
 async def cmd_balances(update, ctx):
     if not is_authorized(update): return
     try:
-        text = await asyncio.to_thread(reports.balances, firefly)
+        text = await asyncio.to_thread(reports.balances, uctx(update).firefly)
     except Exception as e:
         log.exception("balances failed"); text = f"❌ {md(e)}"
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -471,7 +468,7 @@ async def cmd_balances(update, ctx):
 async def cmd_categories(update, ctx):
     if not is_authorized(update): return
     try:
-        text = await asyncio.to_thread(reports.categories, firefly)
+        text = await asyncio.to_thread(reports.categories, uctx(update).firefly)
     except Exception as e:
         log.exception("categories failed"); text = f"❌ {md(e)}"
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -487,7 +484,8 @@ async def _period_command(update, ctx, period):
             await update.message.reply_text(f"Unknown filter `{md(arg)}`.", parse_mode="Markdown")
             return
     try:
-        text = await asyncio.to_thread(reports.transactions, firefly, period, tag_filter=tag)
+        text = await asyncio.to_thread(
+            reports.transactions, uctx(update).firefly, period, tag_filter=tag)
         if text is None: text = "❌ Report returned None"
     except Exception as e:
         log.exception(f"{period} failed"); text = f"❌ {md(e)}"
@@ -502,7 +500,7 @@ async def cmd_thismonth(u, c): await _period_command(u, c, "thismonth")
 
 # ---------- Tasks ----------
 
-def format_task_line(task: dict) -> str:
+def format_task_line(task: dict, vikunja) -> str:
     title = md(task.get("title", "?"))
     due = task.get("due_date")
     try:
@@ -524,7 +522,7 @@ def format_task_line(task: dict) -> str:
         due_str = "no date"
     pri_str = f" [{PRIORITY_LABEL.get(pri, pri)}]" if pri > 0 else ""
 
-    # Project name lookup
+    # Project name lookup in this user's project cache
     project_name = "?"
     if project_id and vikunja._project_cache:
         for name, pid in vikunja._project_cache.items():
@@ -536,9 +534,11 @@ def format_task_line(task: dict) -> str:
     return f"{overdue}*{title}*{pri_str}\n  📅 {due_str}  {project_emoji} {md(project_name)}"
 
 async def _send_tasks(chat_id: int, context: ContextTypes.DEFAULT_TYPE,
-                      project_filter: str = None, header: str = None):
+                      user: UserContext, project_filter: str = None,
+                      header: str = None):
     try:
-        all_tasks = await asyncio.to_thread(vikunja.list_tasks, project_filter=project_filter)
+        all_tasks = await asyncio.to_thread(
+            user.vikunja.list_tasks, project_filter=project_filter)
     except VikunjaError as e:
         await context.bot.send_message(chat_id, f"❌ Vikunja: {md(e)}", parse_mode="Markdown")
         return
@@ -585,7 +585,7 @@ async def _send_tasks(chat_id: int, context: ContextTypes.DEFAULT_TYPE,
         for t in group:
             await context.bot.send_message(
                 chat_id,
-                format_task_line(t),
+                format_task_line(t, user.vikunja),
                 parse_mode="Markdown",
                 reply_markup=kb_task_actions(t["id"]),
             )
@@ -600,7 +600,7 @@ async def cmd_tasks(update, ctx):
         else:
             await update.message.reply_text(f"Unknown filter `{md(arg)}`.", parse_mode="Markdown")
             return
-    await _send_tasks(update.effective_chat.id, ctx, project_filter=project)
+    await _send_tasks(update.effective_chat.id, ctx, uctx(update), project_filter=project)
 
 # ---------- Search & Edit Commands ----------
 
@@ -612,7 +612,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = " ".join(context.args)
     try:
-        results = await asyncio.to_thread(firefly.search_transactions, query)
+        results = await asyncio.to_thread(uctx(update).firefly.search_transactions, query)
         if not results:
             await update.message.reply_text("🤷 No transactions found matching that keyword.")
             return
@@ -624,7 +624,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             date_part = fmt_date(attr["date"])
             time_part = fmt_time(attr["date"])
-            amount_str = f"₹{float(attr['amount']):.2f}"
+            amount_str = money(attr["amount"])
 
             desc = attr["description"]
             if len(desc) > 40:
@@ -646,9 +646,10 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     txn_id = context.args[0]
     user_id = update.effective_user.id
+    user = uctx(update)
 
     try:
-        data = await asyncio.to_thread(firefly.get_transaction, txn_id)
+        data = await asyncio.to_thread(user.firefly.get_transaction, txn_id)
         splits = data["attributes"]["transactions"]
         if len(splits) != 1:
             # Updating would replace the whole group with a single split,
@@ -664,8 +665,8 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         destination_name = attr.get("destination_name") or ""
         parsed_type = attr["type"]
 
-        src_status, src_value = resolve_account(source_name)
-        dst_status, dst_value = resolve_account(destination_name)
+        src_status, src_value = user.resolver.resolve(source_name)
+        dst_status, dst_value = user.resolver.resolve(destination_name)
         src_canonical = src_value if src_status == "match" else source_name
         dst_canonical = None
 
@@ -676,7 +677,7 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # them back to Compass' transfer intent so edits preserve card payments.
         if parsed_type == "withdrawal" and dst_status == "match":
             try:
-                if await asyncio.to_thread(firefly.is_liability, dst_value):
+                if await asyncio.to_thread(user.firefly.is_liability, dst_value):
                     parsed_type = "transfer"
                     dst_canonical = dst_value
             except FireflyError as e:
@@ -686,7 +687,7 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed = {
             "type": parsed_type,
             "amount": float(attr["amount"]),
-            "currency": attr.get("currency_code", "INR"),
+            "currency": attr.get("currency_code", currency.CODE),
             "date": attr.get("date"),
             "source_raw": source_name,
             "destination_raw": destination_name,
@@ -753,27 +754,12 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         attachment_handler.clear_pending_files(context.user_data, pid)
         await update.message.reply_text("📎 That transaction expired. Please send it again.")
 
-async def send_to_digest_recipients(
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    **kwargs,
-) -> None:
-    for user_id in DIGEST_RECIPIENTS:
-        try:
-            await context.bot.send_message(user_id, text, **kwargs)
-        except Exception as e:
-            log.warning(f"Could not send scheduled message to {user_id}: {e}")
-
 # ---------- Daily digest ----------
 
-async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
-    log.info("Sending daily digest...")
+async def _digest_for_user(context: ContextTypes.DEFAULT_TYPE, user: UserContext):
+    """One user's digest, built from their own task list, sent only to them."""
     today = datetime.now(BOT_TIMEZONE).date()
-    try:
-        all_tasks = await asyncio.to_thread(vikunja.list_tasks)
-    except VikunjaError as e:
-        log.error(f"Digest failed: {e}")
-        return
+    all_tasks = await asyncio.to_thread(user.vikunja.list_tasks)
 
     def task_due(t):
         d = t.get("due_date")
@@ -787,8 +773,8 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
     today_tasks = [t for t in all_tasks if (d := task_due(t)) and d == today]
 
     if not overdue and not today_tasks:
-        await send_to_digest_recipients(
-            context,
+        await context.bot.send_message(
+            user.telegram_id,
             "🌅 *Good morning!*\n\n_No tasks due today. Enjoy._",
             parse_mode="Markdown",
         )
@@ -797,16 +783,25 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
     lines = [f"🌅 *Good morning!* — {today.strftime('%d %b %Y')}", ""]
     if overdue: lines.append(f"⚠️ {len(overdue)} overdue")
     if today_tasks: lines.append(f"📅 {len(today_tasks)} due today")
-    await send_to_digest_recipients(context, "\n".join(lines), parse_mode="Markdown")
+    await context.bot.send_message(
+        user.telegram_id, "\n".join(lines), parse_mode="Markdown")
 
     for group_label, group in [("⚠️ Overdue", overdue), ("📅 Today", today_tasks)]:
         for t in group:
-            await send_to_digest_recipients(
-                context,
-                format_task_line(t),
+            await context.bot.send_message(
+                user.telegram_id,
+                format_task_line(t, user.vikunja),
                 parse_mode="Markdown",
                 reply_markup=kb_task_actions(t["id"]),
             )
+
+async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
+    log.info("Sending daily digests...")
+    for user in USERS.values():
+        try:
+            await _digest_for_user(context, user)
+        except Exception as e:
+            log.warning(f"Digest for {user.name} failed: {e}")
 
 async def send_ping_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Simple nudge to log transactions or todos."""
@@ -818,7 +813,11 @@ async def send_ping_reminder(context: ContextTypes.DEFAULT_TYPE):
     ]
     text = random.choice(messages)
 
-    await send_to_digest_recipients(context, text, parse_mode="Markdown")
+    for user in USERS.values():
+        try:
+            await context.bot.send_message(user.telegram_id, text, parse_mode="Markdown")
+        except Exception as e:
+            log.warning(f"Could not send reminder to {user.name}: {e}")
 
 # ---------- Message routing ----------
 
@@ -897,6 +896,7 @@ async def _cancel_pending(pending_id: str, context: ContextTypes.DEFAULT_TYPE, s
 
 async def handle_transaction_message(update, context, text: str):
     user_id = update.effective_user.id
+    resolver = uctx(update).resolver
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
         parsed = await asyncio.to_thread(call_llm_extract, text)
@@ -915,11 +915,11 @@ async def handle_transaction_message(update, context, text: str):
         await update.message.reply_text("🤔 Couldn't parse that into a transaction. Try rephrasing.")
         return
 
-    src_status, src_value = resolve_account(parsed.get("source_raw") or "")
+    src_status, src_value = resolver.resolve(parsed.get("source_raw") or "")
     dst_canonical = None
     dst_status = "match"
     if parsed["type"] in ("transfer", "deposit"):
-        dst_status, dst_value = resolve_account(parsed.get("destination_raw") or "")
+        dst_status, dst_value = resolver.resolve(parsed.get("destination_raw") or "")
         if dst_status == "match": dst_canonical = dst_value
 
     if src_status != "match" and parsed["type"] != "deposit":
@@ -945,6 +945,7 @@ async def handle_transaction_message(update, context, text: str):
 
 async def handle_edit_correction(update, context, pending_id: str, correction: str):
     p = PENDING[pending_id]
+    resolver = USERS[p["user_id"]].resolver
     touch(pending_id)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
@@ -967,7 +968,7 @@ async def handle_edit_correction(update, context, pending_id: str, correction: s
         """Re-resolve an account slot after a correction. The edit model only
         sees the raw text fields, so an unchanged raw must not wipe an
         account the user explicitly picked via buttons."""
-        status, value = resolve_account(raw_new or "")
+        status, value = resolver.resolve(raw_new or "")
         if status == "match":
             return value
         if (raw_new or "") == (raw_old or ""):
@@ -996,10 +997,10 @@ async def handle_edit_correction(update, context, pending_id: str, correction: s
             kb = kb_confirm(pending_id)
         elif p["state"] == "awaiting_source_pick":
             text += "\n\n_Which source account?_"
-            kb = kb_account_picker(pending_id, "src")
+            kb = kb_account_picker(pending_id, "src", USERS[p["user_id"]].account_choices)
         else:
             text += "\n\n_Which destination account?_"
-            kb = kb_account_picker(pending_id, "dst")
+            kb = kb_account_picker(pending_id, "dst", USERS[p["user_id"]].account_choices)
         await context.bot.edit_message_text(
             chat_id=p["card_chat_id"], message_id=p["card_message_id"],
             text=text, parse_mode="Markdown", reply_markup=kb,
@@ -1062,7 +1063,7 @@ async def handle_defer_input(update, context, phrase: str):
         return
 
     try:
-        await asyncio.to_thread(vikunja.update_task, task_id, due_date=new_date)
+        await asyncio.to_thread(uctx(update).vikunja.update_task, task_id, due_date=new_date)
     except VikunjaError as e:
         await update.message.reply_text(f"❌ Vikunja: {md(e)}", parse_mode="Markdown")
         return
@@ -1089,9 +1090,12 @@ async def upload_pending_attachments(
     if not pending_files:
         return 0, 0
 
+    p = PENDING.get(pending_id) or {}
+    token = USERS[p["user_id"]].firefly_token if p.get("user_id") in USERS else None
     ok, fail, failed_paths = await attachment_handler.attach_to_transaction(
         journal_id=str(journal_id),
         local_paths=pending_files,
+        token=token,
     )
     # Keep only the failed files queued so a retry can't re-upload successes
     attachment_handler.set_pending_files(context.user_data, pending_id, failed_paths)
@@ -1122,13 +1126,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_or_update_txn_card(update, context, pid, edit=True)
         return
 
-    # Task action callbacks (Done/Defer/Delete on existing Vikunja tasks)
+    # Task action callbacks (Done/Defer/Delete on existing Vikunja tasks).
+    # These run with the TAPPER's Vikunja identity: acting on someone else's
+    # task (possible in a shared group chat) fails server-side with a 404.
     if action in ("taskdone", "taskdefer", "taskdel"):
         try:
             task_id = int(parts[1])
         except (IndexError, ValueError):
             return
 
+        vikunja = uctx(update).vikunja
         original_text = query.message.text or ""
 
         if action == "taskdone":
@@ -1165,6 +1172,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p is None:
         await query.edit_message_text("⌛ Expired or already handled.")
         return
+
+    # In a shared group chat other allowlisted users can see this card —
+    # only its owner may act on it.
+    if p.get("user_id") != update.effective_user.id:
+        await query.answer("Not your card.", show_alert=True)
+        return
+    owner = USERS[p["user_id"]]
 
     # Refresh the timer and handle the specific button
     touch(pending_id)
@@ -1248,7 +1262,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action in ("picksrc", "pickdst"):
         try:
-            choice = ACCOUNT_CHOICES[int(extra)]
+            choice = owner.account_choices[int(extra)]
         except (TypeError, ValueError, IndexError):
             log.warning(f"Invalid account pick payload: {data!r}")
             return
@@ -1279,7 +1293,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if p.get("kind") == "todo":
             try:
-                result = await asyncio.to_thread(vikunja.create_task, p["parsed"])
+                result = await asyncio.to_thread(owner.vikunja.create_task, p["parsed"])
                 tid = result.get("id", "?")
                 discard(pending_id)
                 await query.edit_message_text(f"{original_card}\n\n✅ _Created. Task #{tid}_", parse_mode="Markdown")
@@ -1296,17 +1310,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 now_str = datetime.now(BOT_TIMEZONE).strftime("%H:%M")
                 if p.get("is_update"):
                     txn_id = p["existing_id"]
-                    update_data = firefly.build_transaction_payload(
+                    update_data = owner.firefly.build_transaction_payload(
                         parsed=p["parsed"],
                         source_canonical=p["src_canonical"],
                         destination_canonical=p["dst_canonical"],
                     )
-                    result = await asyncio.to_thread(firefly.update_transaction, txn_id, update_data)
+                    result = await asyncio.to_thread(owner.firefly.update_transaction, txn_id, update_data)
                     journal_id = result["attributes"]["transactions"][0]["transaction_journal_id"]
                     status_label = f"Updated at {now_str}. Transaction #{txn_id}"
                 else:
                     result = await asyncio.to_thread(
-                        firefly.create_transaction,
+                        owner.firefly.create_transaction,
                         parsed=p["parsed"],
                         source_canonical=p["src_canonical"],
                         destination_canonical=p["dst_canonical"],
@@ -1369,6 +1383,12 @@ async def post_init(application: Application):
 
 def main():
     log.info("Starting Compass bot...")
+    if not USERS:
+        raise SystemExit(
+            "No users configured. Add per-user files to the users/ directory "
+            "(scripts/add-user.sh) or set the legacy TELEGRAM_ALLOWED_USER_IDS "
+            "+ FIREFLY_TOKEN + VIKUNJA_TOKEN env vars."
+        )
     app = (Application.builder()
            .token(TELEGRAM_TOKEN)
            .post_init(post_init)

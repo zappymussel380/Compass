@@ -18,14 +18,14 @@ Rules:
 
 Examples:
 
-Original: {"type":"withdrawal","amount":700,"currency":"INR","source_raw":"rewards","destination_raw":"Board Game Cafe","category":"Entertainment","tags":["personal"],"description":"Board game cafe","confidence":"high","needs_clarification":[]}
+Original: {"type":"withdrawal","amount":700,"currency":"{currency}","source_raw":"rewards","destination_raw":"Board Game Cafe","category":"Entertainment","tags":["personal"],"description":"Board game cafe","confidence":"high","needs_clarification":[]}
 Correction: category should be food
-Output: {"type":"withdrawal","amount":700,"currency":"INR","source_raw":"rewards","destination_raw":"Board Game Cafe","category":"Food and Drinks","tags":["personal"],"description":"Board game cafe","confidence":"high","needs_clarification":[]}
+Output: {"type":"withdrawal","amount":700,"currency":"{currency}","source_raw":"rewards","destination_raw":"Board Game Cafe","category":"Food and Drinks","tags":["personal"],"description":"Board game cafe","confidence":"high","needs_clarification":[]}
 
-Original: {"type":"withdrawal","amount":250,"currency":"INR","source_raw":"checking","destination_raw":"Swiggy","category":"Food and Drinks","tags":["personal"],"description":"Swiggy lunch","confidence":"high","needs_clarification":[]}
+Original: {"type":"withdrawal","amount":250,"currency":"{currency}","source_raw":"checking","destination_raw":"Swiggy","category":"Food and Drinks","tags":["personal"],"description":"Swiggy lunch","confidence":"high","needs_clarification":[]}
 Correction: actually firm not personal
-Output: {"type":"withdrawal","amount":250,"currency":"INR","source_raw":"checking","destination_raw":"Swiggy","category":"Food and Drinks","tags":["firm"],"description":"Swiggy lunch","confidence":"high","needs_clarification":[]}
+Output: {"type":"withdrawal","amount":250,"currency":"{currency}","source_raw":"checking","destination_raw":"Swiggy","category":"Food and Drinks","tags":["firm"],"description":"Swiggy lunch","confidence":"high","needs_clarification":[]}
 
-Original: {"type":"withdrawal","amount":700,"currency":"INR","source_raw":"checking","destination_raw":"Electronics Store","category":"Food and Drinks","tags":["personal"],"description":"Electronics store purchase","confidence":"high","needs_clarification":[]}
+Original: {"type":"withdrawal","amount":700,"currency":"{currency}","source_raw":"checking","destination_raw":"Electronics Store","category":"Food and Drinks","tags":["personal"],"description":"Electronics store purchase","confidence":"high","needs_clarification":[]}
 Correction: source is travel card not checking, and merchant is hard disk
-Output: {"type":"withdrawal","amount":700,"currency":"INR","source_raw":"travel card","destination_raw":"Hard Disk","category":"Shopping","tags":["personal"],"description":"Hard disk purchase","confidence":"high","needs_clarification":[]}
+Output: {"type":"withdrawal","amount":700,"currency":"{currency}","source_raw":"travel card","destination_raw":"Hard Disk","category":"Shopping","tags":["personal"],"description":"Hard disk purchase","confidence":"high","needs_clarification":[]}
