@@ -744,15 +744,18 @@ firefly_token_step() {
 
 firefly_currency_step() {
   # Uses Firefly's native multi-currency support: enable the chosen currency
-  # and make it the logged-in user's default. Both calls are idempotent.
+  # and make it the user's primary/default. Both calls are idempotent. The
+  # empty JSON body matters: Firefly 6.6 answers 415 without a JSON
+  # Content-Type. 'primary' is the 6.6+ route; older 6.x called it 'default'.
   local code="${CFG[CURRENCY]:-INR}"
   local base="http://$(probe_host):${CFG[FIREFLY_PORT]}"
-  if curl -fsS --max-time 10 -X POST \
-       -H "Authorization: Bearer ${CFG[FIREFLY_TOKEN]}" -H "Accept: application/json" \
-       "$base/api/v1/currencies/$code/enable" >/dev/null 2>&1 \
-     && curl -fsS --max-time 10 -X POST \
-       -H "Authorization: Bearer ${CFG[FIREFLY_TOKEN]}" -H "Accept: application/json" \
-       "$base/api/v1/currencies/$code/default" >/dev/null 2>&1; then
+  ff_currency_post() {
+    curl -fsS --max-time 10 -X POST \
+      -H "Authorization: Bearer ${CFG[FIREFLY_TOKEN]}" -H "Accept: application/json" \
+      -H "Content-Type: application/json" -d '{}' \
+      "$base/api/v1/currencies/$code/$1" >/dev/null 2>&1
+  }
+  if ff_currency_post enable && { ff_currency_post primary || ff_currency_post default; }; then
     ok "Firefly default currency set to $code"
   else
     warn "Could not set Firefly's default currency to $code via the API."

@@ -29,6 +29,11 @@ the bot substitutes it into the `{currency}` placeholder in
 from the map in [bot/currency.py](../bot/currency.py); unknown codes render as
 `CODE ` (e.g. `CHF 1,250`).
 
+Firefly itself records every transaction in the *account's* currency, and
+accounts created after install inherit the default set by the installer — so
+pick `CURRENCY` at install time. Changing it later restyles the bot's output
+but does not convert existing Firefly accounts or transactions.
+
 Amounts must be typed as digits. Spelled-out quantity words — "two hundred",
 "1.5 lakh", "crore" — have never been parsed and are not supported.
 
