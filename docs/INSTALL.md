@@ -14,7 +14,7 @@ financial data; clone the repository and read what you run.
 ## Scripted Install
 
 ```bash
-git clone <repo-url> compass
+git clone https://github.com/zappymussel380/Compass.git compass
 cd compass
 ./install.sh
 ```
@@ -74,6 +74,7 @@ Edit `.env` and fill (the installer generates the passwords/keys randomly):
 
 - `TELEGRAM_TOKEN` — from @BotFather
 - `TELEGRAM_ALLOWED_USER_IDS` — your numeric ID, via @userinfobot
+- `CURRENCY` — ISO 4217 code for all amounts (default `INR`)
 - `FIREFLY_APP_KEY` — `echo "base64:$(openssl rand -base64 32)"`
 - `FIREFLY_DB_PASSWORD`, `VIKUNJA_DB_PASSWORD` — strong random strings
 - `PIPELINES_API_KEY` — any random string (only used with Open WebUI)
@@ -98,7 +99,9 @@ first-run setup. This part is manual even under the installer:
 
 - **Firefly:** register in the web UI (first user becomes admin), create your
   asset/liability accounts, then Options → Profile → OAuth → Personal Access
-  Tokens → create one → put it in `.env` as `FIREFLY_TOKEN`.
+  Tokens → create one → put it in `.env` as `FIREFLY_TOKEN`. If `CURRENCY`
+  is not `EUR` (Firefly's own default), make it Firefly's default under
+  Options → Currencies — the installer does this via the API automatically.
 - **Vikunja:** registration is disabled by default; create the admin via CLI:
 
   ```bash
@@ -147,3 +150,77 @@ the installer writes this for you when it detects a GPU.
 Encrypted backups: see [OPERATIONS.md](OPERATIONS.md); the installer can
 generate `.backup_passphrase` and install a daily cron entry (marked
 `# compass-backup` in your crontab).
+
+## Architecture
+
+```text
+Telegram
+   |
+   v
+Compass bot  ---->  Ollama
+   |                  |
+   |                  `-- local parsing model
+   |
+   |----> Firefly III ----> Postgres
+   |
+   `----> Vikunja --------> Postgres
+
+Optional:
+Open WebUI ----> Pipelines ----> Ollama
+```
+
+Everything runs through Docker Compose. Runtime data is stored under `data/`,
+which is ignored by git.
+
+## Repository Layout
+
+```text
+.
+|-- docker-compose.yml        # service stack
+|-- .env.example              # root configuration template
+|-- README.md
+|-- SECURITY.md
+|-- bot/
+|   |-- bot.py                # Telegram bot entrypoint
+|   |-- accounts.py           # generic account alias template
+|   |-- accounts_local.py     # optional ignored private account aliases
+|   |-- currency.py           # deployment currency + display symbols
+|   |-- *_prompt.txt          # finance, todo, edit, and date prompts
+|   |-- firefly_client.py
+|   |-- vikunja_client.py
+|   |-- reports.py
+|   `-- attachment.py
+|-- install.sh                # interactive one-command installer
+|-- openwebui/pipelines/      # optional Open WebUI pipeline
+|-- scripts/
+|   `-- backup.sh             # encrypted backup helper
+`-- docs/
+    |-- INSTALL.md
+    |-- CUSTOMIZATION.md
+    |-- OPERATIONS.md
+    `-- DEVELOPMENT.md
+```
+
+## Configuration Reference
+
+The root `.env` file controls the stack. Important settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `HOST_BIND` | Host address for web ports. Defaults to `127.0.0.1`. |
+| `TELEGRAM_TOKEN` | Bot token from BotFather. |
+| `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot. |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Optional group chat allowlist. Private chats work without this. |
+| `FIREFLY_APP_KEY` | Firefly application key. |
+| `FIREFLY_TOKEN` | Firefly personal access token used by the bot. |
+| `VIKUNJA_TOKEN` | Vikunja API token used by the bot. |
+| `OLLAMA_MODEL` | Local model used for parsing. |
+| `OLLAMA_WARMUP_TIMEOUT` | Timeout for one-time startup prompt warmup. |
+| `TZ` | Timezone for scheduled digest/reminder jobs. |
+| `CURRENCY` | ISO 4217 code for the whole deployment (default `INR`). Sets the bot's display symbol, the currency the parser emits, and Firefly's default currency at install time. |
+| `DIGEST_TIME` | Daily task digest time (`HH:MM`). Empty disables it. |
+| `REMINDER_TIMES` | Optional comma-separated nudge times, e.g. `12:00,17:00,22:00`. Off by default. |
+| `PENDING_TIMEOUT_SECONDS` | How long an unconfirmed transaction/todo card stays alive (default 600). |
+
+By default, web ports bind to localhost. If you change `HOST_BIND` to expose
+services on a network, protect the host with a firewall, VPN, or reverse proxy.

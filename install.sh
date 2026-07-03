@@ -112,7 +112,7 @@ preflight() {
   if [ ! -t 0 ]; then
     die "This installer is interactive and needs a terminal.
   Clone the repo and run it directly:
-    git clone <repo-url> && cd compass && ./install.sh"
+    git clone https://github.com/zappymussel380/Compass.git compass && cd compass && ./install.sh"
   fi
 
   [ -f "$ROOT_DIR/docker-compose.yml" ] \
@@ -199,6 +199,7 @@ set_defaults() {
   CFG[VIKUNJA_PORT]="24030"
   CFG[OPEN_WEBUI_PORT]="3000"
   CFG[TZ]="$tz"
+  CFG[CURRENCY]="INR"
 
   CFG[TELEGRAM_TOKEN]=""
   CFG[TELEGRAM_ALLOWED_USER_IDS]=""
@@ -264,6 +265,7 @@ write_env() {
     echo
     echo "# --- Locale ---"
     echo "TZ=${CFG[TZ]}"
+    echo "CURRENCY=${CFG[CURRENCY]}"
     echo
     echo "# --- Telegram ---"
     echo "TELEGRAM_TOKEN=${CFG[TELEGRAM_TOKEN]}"
@@ -324,6 +326,23 @@ sec_network() {
   ask CFG[VIKUNJA_PORT]    "Vikunja port"      "${CFG[VIKUNJA_PORT]}"
   ask CFG[OLLAMA_PORT]     "Ollama port"       "${CFG[OLLAMA_PORT]}"
   ask CFG[TZ]              "Timezone (IANA)"   "${CFG[TZ]}"
+
+  say
+  say "Currency for all amounts. The bot shows its symbol and Firefly records"
+  say "transactions in it. Common codes: INR USD EUR GBP AUD CAD SGD AED JPY"
+  local cur
+  while true; do
+    ask cur "Currency (ISO 4217 code)" "${CFG[CURRENCY]}"
+    cur="$(printf '%s' "$cur" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+    [[ "$cur" =~ ^[A-Z]{3}$ ]] && break
+    warn "Enter a 3-letter code, e.g. INR, USD, EUR."
+  done
+  CFG[CURRENCY]="$cur"
+  # en_IN digit grouping (1,00,000) only makes sense for INR deployments.
+  if [ "$cur" != "INR" ] && [ "${CFG[FIREFLY_DEFAULT_LOCALE]}" = "en_IN" ]; then
+    CFG[FIREFLY_DEFAULT_LOCALE]="en_US"
+  fi
+
   CFG[FIREFLY_APP_URL]="http://$(probe_host):${CFG[FIREFLY_PORT]}"
   CFG[VIKUNJA_PUBLIC_URL]="http://$(probe_host):${CFG[VIKUNJA_PORT]}"
 }
@@ -588,10 +607,10 @@ run_full_wizard() {
 patch_wizard() {
   while true; do
     head_line "Reconfigure — pick a section"
-    say "  1) Network / ports          5) Ollama model & GPU"
-    say "  2) Telegram                 6) Bank account aliases"
-    say "  3) Firefly III secrets      7) Backups"
-    say "  4) Vikunja secrets          8) Open WebUI"
+    say "  1) Network / locale / currency   5) Ollama model & GPU"
+    say "  2) Telegram                      6) Bank account aliases"
+    say "  3) Firefly III secrets           7) Backups"
+    say "  4) Vikunja secrets               8) Open WebUI"
     say "  d) Done — save and continue"
     local choice
     read -r -p "Section: " choice || die "Input closed."
@@ -721,6 +740,27 @@ firefly_token_step() {
     fi
     warn "Token was rejected by $base/api/v1/about — try again."
   done
+}
+
+firefly_currency_step() {
+  # Uses Firefly's native multi-currency support: enable the chosen currency
+  # and make it the user's primary/default. Both calls are idempotent. The
+  # empty JSON body matters: Firefly 6.6 answers 415 without a JSON
+  # Content-Type. 'primary' is the 6.6+ route; older 6.x called it 'default'.
+  local code="${CFG[CURRENCY]:-INR}"
+  local base="http://$(probe_host):${CFG[FIREFLY_PORT]}"
+  ff_currency_post() {
+    curl -fsS --max-time 10 -X POST \
+      -H "Authorization: Bearer ${CFG[FIREFLY_TOKEN]}" -H "Accept: application/json" \
+      -H "Content-Type: application/json" -d '{}' \
+      "$base/api/v1/currencies/$code/$1" >/dev/null 2>&1
+  }
+  if ff_currency_post enable && { ff_currency_post primary || ff_currency_post default; }; then
+    ok "Firefly default currency set to $code"
+  else
+    warn "Could not set Firefly's default currency to $code via the API."
+    say  "  Set it manually: Firefly → Options → Currencies → make $code default."
+  fi
 }
 
 vikunja_admin_step() {
@@ -970,7 +1010,11 @@ main() {
 
   # Run both token steps even if one is skipped, so progress isn't lost.
   local tokens_ok=1
-  firefly_token_step || tokens_ok=0
+  if firefly_token_step; then
+    firefly_currency_step
+  else
+    tokens_ok=0
+  fi
   vikunja_token_step || tokens_ok=0
 
   if [ "$tokens_ok" -eq 1 ] && start_bot; then

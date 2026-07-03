@@ -19,6 +19,24 @@ Example:
 Transfers require both accounts to resolve. Withdrawals require a source account.
 Deposits require a destination account.
 
+## Currency
+
+One `CURRENCY` code (ISO 4217) in `.env` applies to the whole deployment. The
+installer asks for it, sets it as Firefly's default currency via the API, and
+the bot substitutes it into the `{currency}` placeholder in
+[bot/system_prompt.txt](../bot/system_prompt.txt) and
+[bot/edit_prompt.txt](../bot/edit_prompt.txt) at startup. Display symbols come
+from the map in [bot/currency.py](../bot/currency.py); unknown codes render as
+`CODE ` (e.g. `CHF 1,250`).
+
+Firefly itself records every transaction in the *account's* currency, and
+accounts created after install inherit the default set by the installer — so
+pick `CURRENCY` at install time. Changing it later restyles the bot's output
+but does not convert existing Firefly accounts or transactions.
+
+Amounts must be typed as digits. Spelled-out quantity words — "two hundred",
+"1.5 lakh", "crore" — have never been parsed and are not supported.
+
 ## Finance Prompt
 
 [bot/system_prompt.txt](../bot/system_prompt.txt) controls transaction extraction.
@@ -27,7 +45,11 @@ Update:
 - categories
 - tag rules
 - account examples
-- few-shot examples for your spending language
+- few-shot examples for your spending language (the defaults use Indian
+  merchants like Swiggy and Ola; they teach the message shape and work
+  anywhere, but you can localize them)
+
+Keep the `{currency}` placeholder — the bot fills it from `CURRENCY` at startup.
 
 The bot expects exactly one tag, usually `firm` or `personal`. If you change this
 schema, update report filtering in [bot/reports.py](../bot/reports.py).

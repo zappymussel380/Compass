@@ -1,349 +1,195 @@
-# Compass
+# Compass 🧭
 
-Compass is a self-hosted Telegram bot for natural-language personal finance and
-todo capture. Send a short message like `swiggy 250 lunch checking personal` or
-`remind me to file GST by friday`; Compass parses it with a local Ollama model,
-asks for confirmation in Telegram, then writes the final record to Firefly III
-or Vikunja.
+**Text your expenses and to-dos to a Telegram bot. It keeps the books — on your own machine.**
 
-The project is designed for people who want a private, local-first finance and
-task capture flow with web UIs for review and reporting.
+Compass is a Telegram bot that keeps your spending records and your to-do list
+up to date just by texting it. Message it the way you'd text a friend —
+*"spent 400 on groceries"*, *"remind me to call the electrician tomorrow"* —
+and it files the expense or sets the reminder. No forms, no app-switching,
+no spreadsheet at the end of the month.
 
-## What It Does
+Everything runs on your own computer. Your bank details, your receipts, and
+every message you send stay on hardware you control.
 
-- Logs expenses, income, transfers, and card payments into Firefly III.
-- Creates todos, due dates, priorities, recurring tasks, and quick actions in
-  Vikunja.
-- Uses a local Ollama model for parsing; no hosted LLM API is required.
-- Asks for Telegram confirmation before writing transactions or tasks.
-- Supports receipt/bill attachments for Firefly transactions.
-- Provides Telegram commands for balances, categories, transaction reports, and
-  task digests.
-- Includes optional Open WebUI and Pipelines services for local chat/RAG use.
+## Why Compass exists
 
-## Architecture
+Most expense tracking fails the same way: the app is one more thing to open,
+with one more form to fill in, and after two weeks you stop. Compass removes
+that friction — you're already in Telegram a dozen times a day, and logging a
+purchase is one short message sent from the queue at the till.
 
-```text
-Telegram
-   |
-   v
-Compass bot  ---->  Ollama
-   |                  |
-   |                  `-- local parsing model
-   |
-   |----> Firefly III ----> Postgres
-   |
-   `----> Vikunja --------> Postgres
+The other half is privacy. Finance apps generally want your data in their
+cloud. Compass takes the opposite approach: the message is understood by a
+small AI model running **locally on your machine** (nothing is sent to OpenAI,
+Google, or any other AI service), and the records are stored in your own
+copies of [Firefly III](https://www.firefly-iii.org/) (money) and
+[Vikunja](https://vikunja.io/) (tasks) — two well-regarded open-source apps
+that give you proper web dashboards whenever you want the big picture.
 
-Optional:
-Open WebUI ----> Pipelines ----> Ollama
-```
+Compass was built for and shaped by real daily use, not as a tech demo. The
+rough edges that only show up in week three of actually living with a tool —
+corrections, receipts, card bills, nagging reminders — are the parts that got
+the most attention.
 
-Everything runs through Docker Compose. Runtime data is stored under `data/`,
-which is ignored by git.
-
-## Repository Layout
+## What it feels like
 
 ```text
-.
-|-- docker-compose.yml        # service stack
-|-- .env.example              # root configuration template
-|-- README.md
-|-- SECURITY.md
-|-- bot/
-|   |-- bot.py                # Telegram bot entrypoint
-|   |-- accounts.py           # generic account alias template
-|   |-- accounts_local.py     # optional ignored private account aliases
-|   |-- *_prompt.txt          # finance, todo, edit, and date prompts
-|   |-- firefly_client.py
-|   |-- vikunja_client.py
-|   |-- reports.py
-|   `-- attachment.py
-|-- install.sh                # interactive one-command installer
-|-- openwebui/pipelines/      # optional Open WebUI pipeline
-|-- scripts/
-|   `-- backup.sh             # encrypted backup helper
-`-- docs/
-    |-- INSTALL.md
-    |-- CUSTOMIZATION.md
-    `-- OPERATIONS.md
+You:      spent 400 on groceries at the supermarket, paid by card
+
+Compass:  💸 Expense  ₹400
+          From: Rewards Card
+          To:   Supermarket
+          📁 Groceries   🏷 personal
+          [ ✅ Confirm ] [ ✏️ Edit ] [ 🗑 Cancel ] [ 📎 Attach File ]
+
+You:      (tap ✅ Confirm)
+
+Compass:  ✅ Logged. Transaction #214
 ```
 
-## Requirements
+Made a mistake? Tap **✏️ Edit** and reply in plain words — *"actually it was
+450, and that was the travel card"* — and the card updates before anything is
+saved. Got the receipt? Tap **📎 Attach File** and send the photo or PDF; it's
+stored with the transaction.
 
-- Docker Engine with the Docker Compose plugin
-- A Telegram bot token from BotFather
-- A machine with enough memory/disk for your chosen Ollama model
-- Firefly III and Vikunja API tokens, created after their first-run setup
+To-dos work the same way:
 
-Compass currently assumes a small private deployment. It is not intended as a
-multi-tenant SaaS app.
+```text
+You:      remind me to call the electrician tomorrow
 
-## Quick Start
+Compass:  📝 Call the electrician
+          📅 Tomorrow, 04 Jul
+          [ ✅ Confirm ] [ ✏️ Edit ] [ 🗑 Cancel ]
 
-The interactive installer walks through everything — dependencies, secrets,
-bank account aliases, model download, first-run tokens, and verification:
+You:      (tap ✅ Confirm)
+
+Compass:  ✅ Created. Task #12
+```
+
+Every morning Compass sends a short digest of what's overdue and what's due
+today, with **Done / Defer / Delete** buttons right on each task — so "defer
+to Friday" is one tap and three words.
+
+Nothing is ever written without your confirmation. If you ignore a card, it
+quietly expires.
+
+## What it can do
+
+**Money**
+- Log expenses, income, transfers, and credit-card bill payments in plain language
+- It knows your account nicknames — "card", "savings", "cash" — and asks when it isn't sure
+- Attach receipts (photos or PDFs, several per transaction)
+- Ask for reports any time: `/balances`, `/today`, `/thisweek`, `/thismonth`, `/search coffee`
+- Tag spending as personal or work, and filter reports either way
+
+**Tasks**
+- Create to-dos with due dates, priorities, and repeats ("every 5th")
+- A daily digest of what's overdue and due today
+- One-tap Done / Defer / Delete from any task message
+- Optional gentle nudges during the day to log what you spent
+
+**Your rules**
+- Works in any currency — you pick it once during setup
+- Only the Telegram accounts you allowlist can talk to the bot; everyone else gets silence
+- Full web dashboards (Firefly III and Vikunja) for charts, budgets, and bulk editing
+
+## What you need
+
+- **A Telegram account** — free, on your phone already.
+- **A machine that can run Docker** — a home server, mini-PC, or an always-on
+  spare computer. Linux is the tested platform. Plan for roughly **6 GB of
+  RAM and 15 GB of disk** (most of that is the local AI model).
+- **About 30–60 minutes** for first-time setup — honestly. This is a real
+  self-hosted stack, not a 10-second install; most of that time is downloads,
+  and a setup wizard does the thinking for you.
+
+No graphics card is needed. On a modest CPU-only machine the AI takes a
+minute or two to read each message — fine for "text it and pocket the phone"
+use. With a GPU it's near-instant.
+
+## Getting started
 
 ```bash
-git clone <repo-url> compass
+git clone https://github.com/zappymussel380/Compass.git compass
 cd compass
 ./install.sh
 ```
 
-It never overwrites an existing `.env` without asking, can be re-run any time
-to resume or reconfigure, and `./install.sh --uninstall` tears the stack down
-with explicit confirmations. Deliberately, there is no `curl | bash` one-liner:
-for software that handles your finances, clone it and read what you run.
+The interactive installer walks you through everything: it checks your
+machine, helps you create a Telegram bot (a two-minute chat with
+[@BotFather](https://t.me/BotFather)), asks who's allowed to use it, which
+currency you spend in, and what you call your bank accounts, then generates
+passwords, downloads the AI model, and starts the whole stack. Two short
+steps happen in your browser (creating access tokens in Firefly and Vikunja) —
+the installer tells you exactly when and how.
 
-## Manual Setup
+You can re-run `./install.sh` any time to resume, reconfigure, or uninstall.
 
-Prefer to do it by hand? Create your environment file:
+Deliberately, there is no `curl | bash` one-liner: for software that handles
+your finances, you should be able to read what you run.
 
-```bash
-cp .env.example .env
-```
+Full walkthrough (including fully manual setup): **[docs/INSTALL.md](docs/INSTALL.md)**
 
-Edit `.env` before starting services:
+## How your data stays private
 
-- Replace all image `replace-with-tested-tag` placeholders.
-- Set strong database passwords.
-- Set `TELEGRAM_TOKEN` and `TELEGRAM_ALLOWED_USER_IDS`.
-- Generate and set `FIREFLY_APP_KEY`.
+This matters more for a finance tool than for anything else you self-host,
+so here is the plain version:
 
-Generate a Firefly app key after setting `FIREFLY_IMAGE`:
+- **Everything lives on your machine.** The databases, the receipts, the AI
+  model — all of it. There is no Compass server, no account, no telemetry.
+- **No AI cloud.** Messages are parsed by a local model via
+  [Ollama](https://ollama.com/). Your "spent 12,000 at the clinic" never
+  leaves the house.
+- **Closed to strangers by default.** The bot answers only the Telegram user
+  IDs you allowlist and ignores everyone else completely. The web dashboards
+  are reachable only from the machine itself unless you deliberately open
+  them up.
+- **Your bank names stay out of the code.** Real account names live in a
+  local file that git is told to ignore, so publishing or forking the repo
+  never leaks them.
+- **Encrypted backups.** The optional backup script encrypts everything
+  before it leaves the machine, so you can push backups to any cloud drive
+  without trusting it.
 
-```bash
-docker run --rm "$(sed -n 's/^FIREFLY_IMAGE=//p' .env)" php artisan key:generate --show
-```
+Details, hardening notes, and known limitations: **[SECURITY.md](SECURITY.md)**
 
-Start the core services:
+## Everyday commands
 
-```bash
-docker compose up -d firefly vikunja ollama
-```
-
-Open Firefly and Vikunja on the configured host ports, finish first-run setup,
-create API tokens, then add them to `.env`:
-
-- `FIREFLY_TOKEN`
-- `VIKUNJA_TOKEN`
-
-Pull the configured Ollama model:
-
-```bash
-docker compose exec ollama ollama pull "$(sed -n 's/^OLLAMA_MODEL=//p' .env)"
-```
-
-Start the bot:
-
-```bash
-docker compose up -d --build compass_bot
-```
-
-Send `/start` to your Telegram bot from an allowed Telegram user ID.
-
-For a step-by-step version, read [docs/INSTALL.md](docs/INSTALL.md).
-
-## Configuration
-
-The root `.env` file controls the stack. Important settings:
-
-| Setting | Purpose |
-| --- | --- |
-| `HOST_BIND` | Host address for web ports. Defaults to `127.0.0.1`. |
-| `TELEGRAM_TOKEN` | Bot token from BotFather. |
-| `TELEGRAM_ALLOWED_USER_IDS` | Comma-separated Telegram user IDs allowed to use the bot. |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | Optional group chat allowlist. Private chats work without this. |
-| `FIREFLY_APP_KEY` | Firefly application key. |
-| `FIREFLY_TOKEN` | Firefly personal access token used by the bot. |
-| `VIKUNJA_TOKEN` | Vikunja API token used by the bot. |
-| `OLLAMA_MODEL` | Local model used for parsing. |
-| `OLLAMA_WARMUP_TIMEOUT` | Timeout for one-time startup prompt warmup. |
-| `TZ` | Timezone for scheduled digest/reminder jobs. |
-| `DIGEST_TIME` | Daily task digest time (`HH:MM`). Empty disables it. |
-| `REMINDER_TIMES` | Optional comma-separated nudge times, e.g. `12:00,17:00,22:00`. Off by default. |
-
-By default, web ports bind to localhost. If you change `HOST_BIND` to expose
-services on a network, protect the host with a firewall, VPN, or reverse proxy.
-
-## Customizing Accounts
-
-Compass resolves short account aliases into exact Firefly account names. The
-public repository ships with a generic [bot/accounts.py](bot/accounts.py).
-
-For your own deployment, create `bot/accounts_local.py`:
-
-```python
-ACCOUNTS = {
-    "Main Checking": ["main", "checking", "bank"],
-    "Rewards Card": ["rewards", "credit card"],
-    "Cash": ["cash", "wallet"],
-}
-```
-
-`accounts_local.py` is ignored by git and loaded automatically when present.
-The canonical account names must match Firefly exactly.
-
-See [docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md) for more detail.
-
-## Customizing Prompts
-
-The parsing behavior lives in prompt files under [bot/](bot/):
-
-- [bot/system_prompt.txt](bot/system_prompt.txt): finance transactions
-- [bot/todo_prompt.txt](bot/todo_prompt.txt): todos and reminders
-- [bot/edit_prompt.txt](bot/edit_prompt.txt): transaction corrections
-- [bot/date_prompt.txt](bot/date_prompt.txt): defer-date parsing
-
-The default finance prompt expects tags like `firm` and `personal`. If you
-change that schema, also review report filtering in [bot/reports.py](bot/reports.py).
-
-## Telegram Commands
-
-Core commands:
+Most use is just plain messages, but a few commands are handy:
 
 ```text
-/start
-/help
-/balances
-/categories
-/today
-/yesterday
-/thisweek
-/thismonth
-/tasks
-/search <keyword>
-/edit <transaction-id>
+/balances            all account balances
+/today  /thisweek  /thismonth   spending reports (add "personal" or "firm" to filter)
+/tasks               open tasks (also /tasks work, /tasks personal)
+/search <keyword>    find past transactions
+/edit <id>           fix a transaction that's already saved
+/help                the full list
 ```
 
-Report commands support optional filters:
+## Going further
 
-```text
-/today firm
-/thismonth personal
-/tasks work
-/tasks personal
-```
+- **[docs/INSTALL.md](docs/INSTALL.md)** — full install walkthrough, manual
+  setup, architecture, and every configuration setting.
+- **[docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md)** — account nicknames,
+  currency, categories, and tuning the AI prompts to your spending language.
+- **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — day-2 care: logs, backups,
+  attachments, scheduled messages.
+- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — running the test suite and
+  local development checks.
 
-Most normal use does not require commands. Send plain messages for capture:
+## Project status
 
-```text
-uber 340 airport checking personal
-salary 150000 from acme to savings
-paid credit card 25000 from main bank to rewards card
-remind me to file GST by friday
-remind me to pay card bill every 5th
-```
+Compass is young. It's in real daily use and the core flows are tested live
+(logging, corrections, receipts, card payments, reports, tasks, reminders),
+but before trusting it with important data you should run through those flows
+yourself on your own install — and set up backups early. Issues
+and bug reports are welcome.
 
-Compass will show a Telegram confirmation card before creating anything.
+## Contributing & license
 
-## Attachments
+Contributions are welcome. Keep private data out of the repository and
+preserve the local-first design — those two rules cover most of it. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for tests and checks to run before
+a pull request.
 
-For transaction records, tap `Attach File` on the confirmation card and send PDF
-or image receipts. Supported formats:
-
-- PDF
-- JPG/JPEG
-- PNG
-- WEBP
-
-Files are kept locally only while pending. Successful uploads are deleted from
-the bot attachment directory. Failed uploads remain retryable until you retry or
-discard them.
-
-## Optional Open WebUI
-
-Open WebUI and Pipelines are available behind the `ai-webui` Compose profile:
-
-```bash
-docker compose --profile ai-webui up -d
-```
-
-This is optional and not required for the Telegram bot.
-
-## Operations
-
-Useful commands:
-
-```bash
-docker compose ps
-docker compose logs -f compass_bot
-docker compose restart compass_bot
-docker compose up -d --build compass_bot
-```
-
-Runtime data lives under `data/`:
-
-- Postgres data for Firefly and Vikunja
-- Firefly uploads
-- Vikunja files
-- Ollama model files
-- Open WebUI data
-- temporary bot attachments
-
-For backup guidance, see [docs/OPERATIONS.md](docs/OPERATIONS.md) and
-[scripts/backup.sh](scripts/backup.sh).
-
-## Security
-
-Do not commit:
-
-- `.env`
-- `data/`
-- database dumps
-- Firefly uploads
-- Vikunja files
-- Ollama model data
-- API tokens or Telegram tokens
-- private `bot/accounts_local.py`
-
-The bot only accepts updates from `TELEGRAM_ALLOWED_USER_IDS`. Group chats must
-also be explicitly listed in `TELEGRAM_ALLOWED_CHAT_IDS`.
-
-Read [SECURITY.md](SECURITY.md) before publishing a fork or exposing the web UIs.
-
-## Running Tests
-
-The test suite runs entirely offline — Firefly, Vikunja, Ollama, and Telegram
-are mocked, and the backup script is exercised against stub binaries. No
-credentials are needed.
-
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest tests/
-```
-
-## Development Checks
-
-The basic local validation commands are:
-
-```bash
-python3 -m py_compile bot/*.py openwebui/pipelines/*.py
-docker compose --env-file .env.example config --quiet
-bash -n install.sh scripts/backup.sh bot/test.sh bot/test_todo.sh
-docker build -t compass_bot:review ./bot
-```
-
-Remove the temporary review image after a build check:
-
-```bash
-docker image rm compass_bot:review
-```
-
-## Project Status
-
-Compass is public-repo ready as a self-hosted template, but still early. Before
-using it for important data, test the full flow against your own Firefly and
-Vikunja instances:
-
-- transaction create/edit
-- card payment handling
-- receipt attachment upload and retry
-- todo creation
-- task defer/done/delete actions
-- report commands
-- backup and restore
-
-Contributions should keep private data out of the repository and preserve the
-local-first deployment model.
+Licensed under the [MIT License](LICENSE).
