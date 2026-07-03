@@ -74,6 +74,7 @@ Edit `.env` and fill (the installer generates the passwords/keys randomly):
 
 - `TELEGRAM_TOKEN` — from @BotFather
 - `TELEGRAM_ALLOWED_USER_IDS` — your numeric ID, via @userinfobot
+- `CURRENCY` — ISO 4217 code for all amounts (default `INR`)
 - `FIREFLY_APP_KEY` — `echo "base64:$(openssl rand -base64 32)"`
 - `FIREFLY_DB_PASSWORD`, `VIKUNJA_DB_PASSWORD` — strong random strings
 - `PIPELINES_API_KEY` — any random string (only used with Open WebUI)
@@ -98,7 +99,9 @@ first-run setup. This part is manual even under the installer:
 
 - **Firefly:** register in the web UI (first user becomes admin), create your
   asset/liability accounts, then Options → Profile → OAuth → Personal Access
-  Tokens → create one → put it in `.env` as `FIREFLY_TOKEN`.
+  Tokens → create one → put it in `.env` as `FIREFLY_TOKEN`. If `CURRENCY`
+  is not `EUR` (Firefly's own default), make it Firefly's default under
+  Options → Currencies — the installer does this via the API automatically.
 - **Vikunja:** registration is disabled by default; create the admin via CLI:
 
   ```bash

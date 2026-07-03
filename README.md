@@ -160,8 +160,10 @@ The root `.env` file controls the stack. Important settings:
 | `OLLAMA_MODEL` | Local model used for parsing. |
 | `OLLAMA_WARMUP_TIMEOUT` | Timeout for one-time startup prompt warmup. |
 | `TZ` | Timezone for scheduled digest/reminder jobs. |
+| `CURRENCY` | ISO 4217 code for the whole deployment (default `INR`). Sets the bot's display symbol, the currency the parser emits, and Firefly's default currency at install time. |
 | `DIGEST_TIME` | Daily task digest time (`HH:MM`). Empty disables it. |
 | `REMINDER_TIMES` | Optional comma-separated nudge times, e.g. `12:00,17:00,22:00`. Off by default. |
+| `PENDING_TIMEOUT_SECONDS` | How long an unconfirmed transaction/todo card stays alive (default 600). |
 
 By default, web ports bind to localhost. If you change `HOST_BIND` to expose
 services on a network, protect the host with a firewall, VPN, or reverse proxy.
@@ -197,6 +199,13 @@ The parsing behavior lives in prompt files under [bot/](bot/):
 
 The default finance prompt expects tags like `firm` and `personal`. If you
 change that schema, also review report filtering in [bot/reports.py](bot/reports.py).
+
+The finance and edit prompts contain a `{currency}` placeholder that is filled
+from the `CURRENCY` setting when the bot starts — keep it if you edit them.
+The few-shot examples use Indian merchants (Swiggy, Ola, ICAI); they teach the
+model the message *shape* and work for any deployment, but you can swap in
+local names. Amounts must be typed as digits — spelled-out quantity words
+(including Indian "lakh"/"crore") are not parsed.
 
 ## Telegram Commands
 

@@ -125,8 +125,10 @@ services:
       - TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:?Set TELEGRAM_ALLOWED_USER_IDS in .env}
       - TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS:-}
       - ATTACHMENTS_DIR=/app/attachments
+      - CURRENCY=${CURRENCY:-INR}
       - DIGEST_TIME=${DIGEST_TIME:-11:00}
       - REMINDER_TIMES=${REMINDER_TIMES:-}
+      - PENDING_TIMEOUT_SECONDS=${PENDING_TIMEOUT_SECONDS:-600}
       - TZ=${TZ:-Asia/Kolkata}
     volumes:
       - ./data/bot_attachments:/app/attachments

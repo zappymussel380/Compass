@@ -20,6 +20,7 @@ from telegram.ext import (
     CommandHandler, ContextTypes, filters,
 )
 
+import currency
 from accounts import resolve_account, ACCOUNTS
 from firefly_client import FireflyClient, FireflyError
 from vikunja_client import VikunjaClient, VikunjaError
@@ -85,8 +86,10 @@ HERE = os.path.dirname(__file__)
 def _load(name):
     with open(os.path.join(HERE, name)) as f:
         return f.read()
-SYSTEM_PROMPT = _load("system_prompt.txt")
-EDIT_PROMPT = _load("edit_prompt.txt")
+# The finance/edit prompts are written against a {currency} placeholder so
+# one deployment-wide CURRENCY setting controls what the model emits.
+SYSTEM_PROMPT = _load("system_prompt.txt").replace("{currency}", currency.CODE)
+EDIT_PROMPT = _load("edit_prompt.txt").replace("{currency}", currency.CODE)
 TODO_PROMPT = _load("todo_prompt.txt")
 DATE_PROMPT = _load("date_prompt.txt")
 
@@ -222,12 +225,7 @@ DISPLAY_TYPE = {
     "transfer":   ("Transfer","🔀"),
 }
 
-def fmt_amount(value) -> str:
-    """₹1,250 for whole amounts, ₹1,250.50 otherwise (no trailing .0)."""
-    value = float(value)
-    if value.is_integer():
-        return f"{int(value):,}"
-    return f"{value:,.2f}"
+money = currency.money
 
 PRIORITY_LABEL = {
     0: "—", 1: "low", 2: "medium", 3: "high", 4: "urgent",
@@ -236,7 +234,7 @@ PRIORITY_LABEL = {
 def format_txn_card(parsed: dict, src_canonical: str | None,
                     dst_canonical: str | None) -> str:
     label, emoji = DISPLAY_TYPE.get(parsed["type"], ("?", "❓"))
-    lines = [f"{emoji} *{label}*  ₹{fmt_amount(parsed['amount'])}", ""]
+    lines = [f"{emoji} *{label}*  {money(parsed['amount'])}", ""]
     if parsed["type"] == "withdrawal":
         lines.append(f"From: `{md(src_canonical or '(pick one)')}`")
         lines.append(f"To:   {md(parsed.get('destination_raw', '?'))}")
@@ -624,7 +622,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             date_part = fmt_date(attr["date"])
             time_part = fmt_time(attr["date"])
-            amount_str = f"₹{float(attr['amount']):.2f}"
+            amount_str = money(attr["amount"])
 
             desc = attr["description"]
             if len(desc) > 40:
@@ -686,7 +684,7 @@ async def cmd_edit_txn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parsed = {
             "type": parsed_type,
             "amount": float(attr["amount"]),
-            "currency": attr.get("currency_code", "INR"),
+            "currency": attr.get("currency_code", currency.CODE),
             "date": attr.get("date"),
             "source_raw": source_name,
             "destination_raw": destination_name,

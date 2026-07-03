@@ -9,6 +9,7 @@ from collections import defaultdict
 import pytz
 from telegram.helpers import escape_markdown
 from firefly_client import FireflyClient
+from currency import SYMBOL as CUR
 
 MAX_DETAIL_TXNS = 20  # Cap on per-section detail before "...and N more"
 REPORT_TIMEZONE = pytz.timezone(os.environ.get("TZ", "Asia/Kolkata"))
@@ -50,7 +51,7 @@ def balances(client: FireflyClient) -> str:
 
     for acc in sorted(accounts, key=lambda a: a["name"]):
         balance = acc["current_balance"]
-        line = f"  `{md(acc['name']):<22}` ₹{balance:>12,.2f}"
+        line = f"  `{md(acc['name']):<22}` {CUR}{balance:>12,.2f}"
 
         if acc["type"] == "asset":
             bank_lines.append(line)
@@ -62,13 +63,13 @@ def balances(client: FireflyClient) -> str:
     out = ["💰 *Account Balances*", ""]
     out.append("🏦 *Bank Accounts & Cash*")
     out.extend(bank_lines)
-    out.append(f"  *Total*                ₹{bank_total:>12,.2f}")
+    out.append(f"  *Total*                {CUR}{bank_total:>12,.2f}")
     out.append("")
     out.append("💳 *Credit Cards*")
     out.extend(card_lines)
-    out.append(f"  *Total*                ₹{card_total:>12,.2f}")
+    out.append(f"  *Total*                {CUR}{card_total:>12,.2f}")
     out.append("")
-    out.append(f"📊 *Net Worth*           ₹{bank_total + card_total:>12,.2f}")
+    out.append(f"📊 *Net Worth*           {CUR}{bank_total + card_total:>12,.2f}")
     return "\n".join(out)
 
 
@@ -121,7 +122,7 @@ def _fetch_transactions(client: FireflyClient, start: date, end: date) -> list:
 def _format_txn_line(txn: dict, sign: str) -> str:
     """One line for a transaction. sign is '+' or '-'."""
     when = datetime.fromisoformat(txn["date"].replace("Z", "+00:00")).strftime("%H:%M")
-    amt = f"{sign}₹{float(txn['amount']):,.0f}"
+    amt = f"{sign}{CUR}{float(txn['amount']):,.0f}"
     src = txn.get("source_name") or "?"
     dst = txn.get("destination_name") or "?"
     cat = txn.get("category_name") or "?"
@@ -162,7 +163,7 @@ def transactions(client: FireflyClient, period: str, tag_filter: str = None) -> 
 
     # ---- Income ----
     if income:
-        out.append(f"💰 *Income (₹{income_total:,.0f})*")
+        out.append(f"💰 *Income ({CUR}{income_total:,.0f})*")
         for t in income[:MAX_DETAIL_TXNS]:
             out.append(_format_txn_line(t, "+"))
         if len(income) > MAX_DETAIL_TXNS:
@@ -171,14 +172,14 @@ def transactions(client: FireflyClient, period: str, tag_filter: str = None) -> 
 
     # ---- Expenses ----
     if expense:
-        out.append(f"💸 *Expenses (₹{expense_total:,.0f})*")
+        out.append(f"💸 *Expenses ({CUR}{expense_total:,.0f})*")
         # Category summary
         by_cat = defaultdict(float)
         for t in expense:
             by_cat[t.get("category_name") or "Uncategorized"] += float(t["amount"])
         out.append("  _By category:_")
         for cat, total in sorted(by_cat.items(), key=lambda kv: -kv[1]):
-            out.append(f"    {md(cat)}: ₹{total:,.0f}")
+            out.append(f"    {md(cat)}: {CUR}{total:,.0f}")
         out.append("")
         # Detail
         out.append("  _Recent:_")
@@ -190,7 +191,7 @@ def transactions(client: FireflyClient, period: str, tag_filter: str = None) -> 
 
     # ---- Transfers ----
     if transfer:
-        out.append(f"🔀 *Transfers (₹{transfer_total:,.0f})*")
+        out.append(f"🔀 *Transfers ({CUR}{transfer_total:,.0f})*")
         for t in transfer[:MAX_DETAIL_TXNS]:
             out.append(_format_txn_line(t, "↔"))
         if len(transfer) > MAX_DETAIL_TXNS:
@@ -199,7 +200,7 @@ def transactions(client: FireflyClient, period: str, tag_filter: str = None) -> 
 
     # ---- Net ----
     net = income_total - expense_total
-    out.append(f"📊 *Net*: {'+' if net >= 0 else ''}₹{net:,.0f}")
+    out.append(f"📊 *Net*: {'+' if net >= 0 else ''}{CUR}{net:,.0f}")
 
     if not (income or expense or transfer):
         return f"{header}\n\n_No transactions in this period._"
