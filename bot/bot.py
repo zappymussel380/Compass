@@ -13,6 +13,7 @@ import pytz
 from datetime import datetime, date, timedelta, time as dtime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     Application, MessageHandler, CallbackQueryHandler,
@@ -1187,12 +1188,20 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if fail:
             touch(pending_id)
-            await query.edit_message_text(
-                f"{original_card}\n\n✅ _{status_label}_{note}\n\n"
-                "_Failed files are still saved. Retry upload or discard them._",
-                parse_mode="Markdown",
-                reply_markup=kb_attachment_retry(pending_id),
-            )
+            # Include the retry time so repeated failures never produce an
+            # identical edit, which Telegram rejects as "not modified".
+            retry_time = datetime.now(BOT_TIMEZONE).strftime("%H:%M:%S")
+            try:
+                await query.edit_message_text(
+                    f"{original_card}\n\n✅ _{status_label}_{note}\n\n"
+                    f"_Retry at {retry_time} failed. Files are still saved — "
+                    "retry again or discard them._",
+                    parse_mode="Markdown",
+                    reply_markup=kb_attachment_retry(pending_id),
+                )
+            except BadRequest as e:
+                if "not modified" not in str(e).lower():
+                    raise
             return
 
         discard(pending_id)
